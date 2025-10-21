@@ -1,0 +1,46 @@
+# ========== WebSocket服务器依赖 ==========
+# WebSocket支持
+websockets>=11.0.3
+
+# 串口通信和Modbus RTU协议
+pymodbus>=3.0.0
+pyserial>=3.5
+
+# 异步编程支持
+asyncio>=3.4.3
+
+# 配置解析
+configparser>=5.3.0
+
+# 数据可视化 (可选，用于图表)
+plotly>=5.0.0
+
+# ========== 数据库依赖 ==========
+# 数据库支持 (可选)
+pymysql>=1.0.0
+sqlalchemy>=2.0.0
+
+# ========== 工具和日志 ==========
+# 日志和工具
+python-dateutil>=2.8.0
+
+# ========== API服务器依赖 ==========
+# FastAPI框架
+fastapi>=0.100.0
+
+# ASGI服务器
+uvicorn>=0.23.0
+
+# 数据验证和序列化
+pydantic>=2.0.0
+
+# JWT认证支持
+python-jose[cryptography]>=3.3.0
+
+# 表单数据处理
+python-multipart>=0.0.6
+
+# ========== 测试依赖 ==========
+# 测试相关
+pytest>=7.0.0
+pytest-asyncio>=0.21.0

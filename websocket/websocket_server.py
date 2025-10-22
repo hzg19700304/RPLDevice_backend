@@ -167,8 +167,7 @@ class WebSocketServer:
                 "data": {
                     "websocket_connected": websocket_connected,
                     "hmi_serial_available": hmi_ok,
-                    "scada_serial_available": scada_ok,
-                    "control_board_serial_available": hmi_ok  # 控制板串口状态（与HMI串口相同）
+                    "scada_serial_available": scada_ok
                 }
             }
             #序列化消息体

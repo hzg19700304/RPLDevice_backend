@@ -378,15 +378,40 @@ class MessageHandler:
         read_type = data.get("read_type", "control_params")
         
         if read_type == "control_params":
-            params = self._get_control_parameters()
+            # 尝试从串口实际读取控制参数
+            try:
+                if self.serial_manager and self.serial_manager.hmi_master:
+                    # 读取0x2200-0x2237区域（55个寄存器）
+                    # print(f"📡 [参数读取] 正在从串口读取控制参数区域 0x2200-0x2237...")
+                    actual_registers = self.serial_manager.hmi_master.read_holding_registers(16, 0x2200, 55)
+                    # print(f"📡 [参数读取] 成功读取到 {len(actual_registers)} 个寄存器数据")
+                    
+                    # 显示前10个寄存器值作为示例
+                    if len(actual_registers) >= 10:
+                        pass
+                        # print(f"📡 [参数读取] 前10个寄存器值: {actual_registers[:10]}")
+                    
+                    # 使用实际读取的数据生成参数
+                    params = self._get_control_parameters_from_registers(actual_registers)
+                    # print(f"📡 [参数读取] 生成 {len(params)} 个控制参数")
+                else:
+                    # print(f"⚠️  [参数读取] 串口管理器未初始化，使用模拟数据")
+                    params = self._get_control_parameters()
+            except Exception as e:
+                # print(f"❌ [参数读取] 串口读取失败: {e}，回退到模拟数据")
+                params = self._get_control_parameters()
+                
             response_data = {"params": params}
+            
         elif read_type == "sensor_params":
             sensor_params = self._get_sensor_parameters()
             response_data = {"params": sensor_params}
+            
         elif read_type == "single":
             reg_addr = data.get("reg_addr")
             param = self._get_single_parameter(reg_addr)
             response_data = {"param": param}
+            
         else:
             response_data = {}
         
@@ -602,6 +627,111 @@ class MessageHandler:
             ]
         }
     
+    def _get_control_parameters_from_registers(self, registers: list) -> list:
+        """根据实际读取的寄存器数据生成控制参数"""
+        if not registers or len(registers) < 55:
+            # print(f"⚠️  [参数生成] 寄存器数据不足，使用模拟数据")
+            return self._get_control_parameters()
+        
+        # print(f"📊 [参数生成] 使用实际寄存器数据生成控制参数...")
+        
+        # 根据config.ini中的HMI系统控制参数地址映射定义
+        param_mappings = [
+            # 电压保护值（1-11段，单位：V）
+            {"addr": 0x2200, "name": "1段电压保护值（V）", "unit": "V", "min": 0, "max": 1000},
+            {"addr": 0x2201, "name": "2段电压保护值（V）", "unit": "V", "min": 0, "max": 1000},
+            {"addr": 0x2202, "name": "3段电压保护值（V）", "unit": "V", "min": 0, "max": 1000},
+            {"addr": 0x2203, "name": "4段电压保护值（V）", "unit": "V", "min": 0, "max": 1000},
+            {"addr": 0x2204, "name": "5段电压保护值（V）", "unit": "V", "min": 0, "max": 1000},
+            {"addr": 0x2205, "name": "6段电压保护值（V）", "unit": "V", "min": 0, "max": 1000},
+            {"addr": 0x2206, "name": "7段电压保护值（V）", "unit": "V", "min": 0, "max": 1000},
+            {"addr": 0x2207, "name": "8段电压保护值（V）", "unit": "V", "min": 0, "max": 1000},
+            {"addr": 0x2208, "name": "9段电压保护值（V）", "unit": "V", "min": 0, "max": 1000},
+            {"addr": 0x2209, "name": "10段电压保护值（V）", "unit": "V", "min": 0, "max": 1000},
+            {"addr": 0x220A, "name": "11段电压保护值（V）", "unit": "V", "min": 0, "max": 1000},
+            
+            # 保护延时动作时间（1-10段，单位：0.01s，最大值300s）
+            {"addr": 0x220B, "name": "1段保护延时（0.01s）", "unit": "0.01s", "min": 0, "max": 30000},
+            {"addr": 0x220C, "name": "2段保护延时（0.01s）", "unit": "0.01s", "min": 0, "max": 30000},
+            {"addr": 0x220D, "name": "3段保护延时（0.01s）", "unit": "0.01s", "min": 0, "max": 30000},
+            {"addr": 0x220E, "name": "4段保护延时（0.01s）", "unit": "0.01s", "min": 0, "max": 30000},
+            {"addr": 0x220F, "name": "5段保护延时（0.01s）", "unit": "0.01s", "min": 0, "max": 30000},
+            {"addr": 0x2210, "name": "6段保护延时（0.01s）", "unit": "0.01s", "min": 0, "max": 30000},
+            {"addr": 0x2211, "name": "7段保护延时（0.01s）", "unit": "0.01s", "min": 0, "max": 30000},
+            {"addr": 0x2212, "name": "8段保护延时（0.01s）", "unit": "0.01s", "min": 0, "max": 30000},
+            {"addr": 0x2213, "name": "9段保护延时（0.01s）", "unit": "0.01s", "min": 0, "max": 30000},
+            {"addr": 0x2214, "name": "10段保护延时（0.01s）", "unit": "0.01s", "min": 0, "max": 30000},
+            
+            # KM闭合延续时间（1-10段，单位：s，最大值300s）
+            {"addr": 0x2215, "name": "1段KM闭合时间（s）", "unit": "s", "min": 0, "max": 300},
+            {"addr": 0x2216, "name": "2段KM闭合时间（s）", "unit": "s", "min": 0, "max": 300},
+            {"addr": 0x2217, "name": "3段KM闭合时间（s）", "unit": "s", "min": 0, "max": 300},
+            {"addr": 0x2218, "name": "4段KM闭合时间（s）", "unit": "s", "min": 0, "max": 300},
+            {"addr": 0x2219, "name": "5段KM闭合时间（s）", "unit": "s", "min": 0, "max": 300},
+            {"addr": 0x221A, "name": "6段KM闭合时间（s）", "unit": "s", "min": 0, "max": 300},
+            {"addr": 0x221B, "name": "7段KM闭合时间（s）", "unit": "s", "min": 0, "max": 300},
+            {"addr": 0x221C, "name": "8段KM闭合时间（s）", "unit": "s", "min": 0, "max": 300},
+            {"addr": 0x221D, "name": "9段KM闭合时间（s）", "unit": "s", "min": 0, "max": 300},
+            {"addr": 0x221E, "name": "10段KM闭合时间（s）", "unit": "s", "min": 0, "max": 300},
+            
+            # 连续动作时间（1-10段，单位：s，最大值1800s）
+            {"addr": 0x221F, "name": "1段连续动作时间（s）", "unit": "s", "min": 0, "max": 1800},
+            {"addr": 0x2220, "name": "2段连续动作时间（s）", "unit": "s", "min": 0, "max": 1800},
+            {"addr": 0x2221, "name": "3段连续动作时间（s）", "unit": "s", "min": 0, "max": 1800},
+            {"addr": 0x2222, "name": "4段连续动作时间（s）", "unit": "s", "min": 0, "max": 1800},
+            {"addr": 0x2223, "name": "5段连续动作时间（s）", "unit": "s", "min": 0, "max": 1800},
+            {"addr": 0x2224, "name": "6段连续动作时间（s）", "unit": "s", "min": 0, "max": 1800},
+            {"addr": 0x2225, "name": "7段连续动作时间（s）", "unit": "s", "min": 0, "max": 1800},
+            {"addr": 0x2226, "name": "8段连续动作时间（s）", "unit": "s", "min": 0, "max": 1800},
+            {"addr": 0x2227, "name": "9段连续动作时间（s）", "unit": "s", "min": 0, "max": 1800},
+            {"addr": 0x2228, "name": "10段连续动作时间（s）", "unit": "s", "min": 0, "max": 1800},
+            
+            # 连续动作次数（1-10段，单位：次，0-10次，0：关闭）
+            {"addr": 0x2229, "name": "1段连续动作次数（次）", "unit": "次", "min": 0, "max": 10},
+            {"addr": 0x222A, "name": "2段连续动作次数（次）", "unit": "次", "min": 0, "max": 10},
+            {"addr": 0x222B, "name": "3段连续动作次数（次）", "unit": "次", "min": 0, "max": 10},
+            {"addr": 0x222C, "name": "4段连续动作次数（次）", "unit": "次", "min": 0, "max": 10},
+            {"addr": 0x222D, "name": "5段连续动作次数（次）", "unit": "次", "min": 0, "max": 10},
+            {"addr": 0x222E, "name": "6段连续动作次数（次）", "unit": "次", "min": 0, "max": 10},
+            {"addr": 0x222F, "name": "7段连续动作次数（次）", "unit": "次", "min": 0, "max": 10},
+            {"addr": 0x2230, "name": "8段连续动作次数（次）", "unit": "次", "min": 0, "max": 10},
+            {"addr": 0x2231, "name": "9段连续动作次数（次）", "unit": "次", "min": 0, "max": 10},
+            {"addr": 0x2232, "name": "10段连续动作次数（次）", "unit": "次", "min": 0, "max": 10},
+            
+            # 其他参数
+            {"addr": 0x2233, "name": "KM分断电流设置值（A）", "unit": "A", "min": 0, "max": 500},
+            {"addr": 0x2234, "name": "可控硅导通判断电流值（A）", "unit": "A", "min": 0, "max": 500},
+            {"addr": 0x2235, "name": "SV1与SV2允许偏差值（V）", "unit": "V", "min": 0, "max": 100},
+            {"addr": 0x2236, "name": "故障录波周期（ms）", "unit": "ms", "min": 0, "max": 65535},
+        ]
+        
+        params = []
+        for mapping in param_mappings:
+            addr_offset = mapping["addr"] - 0x2200
+            if addr_offset < len(registers):
+                current_value = registers[addr_offset]
+                # print(f"    0x{mapping['addr']:04X} ({mapping['name']}): {current_value} {mapping['unit']}")
+                
+                params.append({
+                    "reg_addr": f"0x{mapping['addr']:04X}",
+                    "param_name": mapping["name"],
+                    "current_value": current_value,
+                    "value_range": f"{mapping['min']}-{mapping['max']}",
+                    "unit": mapping["unit"]
+                })
+            else:
+                # print(f"    0x{mapping['addr']:04X} ({mapping['name']}): 数据不足，使用默认值")
+                params.append({
+                    "reg_addr": f"0x{mapping['addr']:04X}",
+                    "param_name": mapping["name"],
+                    "current_value": 0,
+                    "value_range": f"{mapping['min']}-{mapping['max']}",
+                    "unit": mapping["unit"]
+                })
+        
+        # print(f"📊 [参数生成] 成功生成 {len(params)} 个控制参数")
+        return params
+
     def _get_control_parameters(self) -> list:
         """获取控制参数"""
         control_mapping = self.config_manager.get_control_parameters_mapping()

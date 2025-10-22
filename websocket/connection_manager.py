@@ -137,8 +137,14 @@ class ConnectionManager:
         message_json = json.dumps(message, ensure_ascii=False)  # 序列化消息
         disconnected_websockets = []
 
+        # 创建连接列表的副本以避免在遍历时修改字典
+        connections_copy = list(self.active_connections.items())
+        
         # 遍历所有连接
-        for websocket, connection_info in self.active_connections.items():
+        for websocket, connection_info in connections_copy:
+            if websocket not in self.active_connections:  # 检查连接是否仍然存在
+                continue
+                
             try:
                 await websocket.send(message_json)  # 发送消息
                 connection_info['message_count_sent'] += 1  # 更新每个连接的发送计数

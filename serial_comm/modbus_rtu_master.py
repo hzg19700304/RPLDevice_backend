@@ -203,11 +203,11 @@ class ModbusRtuMaster:
             raise ModbusException("连接未开启")
 
         # 添加调试信息：记录下发的Modbus命令
-        # if isinstance(val_cnt, list):
-        #     debug_val = f"[{', '.join(map(str, val_cnt))}]"
-        # else:
-        #     debug_val = str(val_cnt)
-        # 
+        if isinstance(val_cnt, list):
+            debug_val = f"[{', '.join(map(str, val_cnt))}]"
+        else:
+            debug_val = str(val_cnt)
+        
         # print(f"🔧 [Modbus命令下发] 功能码: {func}, 从站地址: {slave}, 寄存器地址: 0x{addr:04X}, 值/数量: {debug_val}")
 
         trans = Transaction(function=func, slave_id=slave, address=addr, value_or_count=val_cnt, timeout=timeout)
@@ -216,7 +216,7 @@ class ModbusRtuMaster:
         # 使用更精确的等待机制，避免竞态条件
         while trans.result is None:
             if time.time() > trans.expire:
-                # print(f"⏰ [Modbus命令超时] 功能码: {func}, 从站地址: {slave}, 寄存器地址: 0x{addr:04X}")
+                print(f"⏰ [Modbus命令超时] 功能码: {func}, 从站地址: {slave}, 寄存器地址: 0x{addr:04X}")
                 raise ModbusException(f"{func} 操作超时")
             # 使用更短的休眠时间，提高响应性
             time.sleep(0.001)
@@ -229,10 +229,16 @@ class ModbusRtuMaster:
             raise trans.result
         
         # 添加调试信息：记录成功的Modbus响应
-        # if func.startswith("read"):
-        #     print(f"✅ [Modbus读取成功] 功能码: {func}, 从站地址: {slave}, 寄存器地址: 0x{addr:04X}, 返回值: {trans.result}")
-        # else:
-        #     print(f"✅ [Modbus写入成功] 功能码: {func}, 从站地址: {slave}, 寄存器地址: 0x{addr:04X}")
+        if func.startswith("read"):
+            # print(f"✅ [Modbus读取成功] 功能码: {func}, 从站地址: {slave}, 寄存器地址: 0x{addr:04X}, 返回值: {trans.result}")
+            # 特殊调试：如果是读取控制参数区域（0x2200-0x2237），显示详细参数值
+            if addr >= 0x2200 and addr <= 0x2237 and isinstance(trans.result, list):
+                print(f"📊 [控制参数详情] 读取到 {len(trans.result)} 个寄存器:")
+                for i, value in enumerate(trans.result):
+                    reg_addr = addr + i
+                    print(f"    0x{reg_addr:04X} = {value}")
+        else:
+            print(f"✅ [Modbus写入成功] 功能码: {func}, 从站地址: {slave}, 寄存器地址: 0x{addr:04X}")
         
         return trans.result
 

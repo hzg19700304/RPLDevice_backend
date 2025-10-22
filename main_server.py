@@ -49,7 +49,13 @@ if log_level >= logging.INFO:
     logging.getLogger('pymodbus.client').setLevel(logging.WARNING)
     logging.getLogger('pymodbus.server').setLevel(logging.WARNING)
     
-    print(f"已预先禁用pymodbus调试日志输出，主日志级别: {log_level_str}")
+    # 控制HTTP客户端日志级别（减少HTTP请求调试信息）
+    logging.getLogger('httpx').setLevel(logging.WARNING)
+    logging.getLogger('httpcore').setLevel(logging.WARNING)
+    logging.getLogger('httpx.http2').setLevel(logging.WARNING)
+    logging.getLogger('httpx.connection').setLevel(logging.WARNING)
+    
+    print(f"已预先禁用pymodbus和HTTP客户端调试日志输出，主日志级别: {log_level_str}")
 else:
     # 如果是debug级别，保持默认配置
     logging.basicConfig(
@@ -617,6 +623,16 @@ async def main():
         logging.getLogger('pymodbus.logging').setLevel(logging.WARNING)
         logging.getLogger('pymodbus.client').setLevel(logging.WARNING)
         logging.getLogger('pymodbus.server').setLevel(logging.WARNING)
+        
+        # 控制HTTP客户端日志级别（减少HTTP请求调试信息）
+        logging.getLogger('httpx').setLevel(logging.WARNING)
+        logging.getLogger('httpcore').setLevel(logging.WARNING)
+        logging.getLogger('httpx.http2').setLevel(logging.WARNING)
+        logging.getLogger('httpx.connection').setLevel(logging.WARNING)
+        
+        # 控制Uvicorn访问日志（减少HTTP请求日志）
+        logging.getLogger('uvicorn.access').setLevel(logging.WARNING)
+        logging.getLogger('uvicorn.error').setLevel(logging.WARNING)
     
     logger.info(f"日志级别已设置为: {log_level_str} ({log_level})")
     

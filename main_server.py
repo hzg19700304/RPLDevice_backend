@@ -13,6 +13,8 @@ import time
 import queue
 from pathlib import Path
 from typing import Dict, Any
+import os
+from logging.handlers import RotatingFileHandler
 
 # 在导入任何可能使用pymodbus的模块之前，先配置日志级别
 # 先创建临时配置管理器来获取日志级别
@@ -21,11 +23,14 @@ from config.config_manager import ConfigManager
 temp_config_manager = ConfigManager()
 log_config = temp_config_manager.get_section("日志配置")
 log_level_str = log_config.get("日志级别", "info").lower()
+log_file_path = log_config.get("日志文件路径", "D:/rpldevice/logs")
+log_file_name = log_config.get("日志文件名称", "log.log")
+log_file_max_size = int(log_config.get("日志文件最大大小", "10"))  # MB
 
 # 转换日志级别字符串为logging常量
 log_level_map = {
-    "debug": logging.DEBUG,
-    "info": logging.INFO,
+    "debug": logging.WARNING,
+    "info": logging.WARNING,
     "warning": logging.WARNING,
     "warn": logging.WARNING,
     "error": logging.ERROR,
@@ -33,36 +38,57 @@ log_level_map = {
 }
 log_level = log_level_map.get(log_level_str, logging.INFO)
 
-# 预先禁用pymodbus的调试日志，在导入之前设置
+# 创建日志目录
+os.makedirs(log_file_path, exist_ok=True)
+log_file_full_path = os.path.join(log_file_path, log_file_name)
+
+# 配置日志格式
+log_formatter = logging.Formatter(
+    fmt='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
+
+# 创建根日志记录器
+root_logger = logging.getLogger()
+root_logger.setLevel(log_level)
+
+# 清除现有的处理器
+for handler in root_logger.handlers[:]:
+    root_logger.removeHandler(handler)
+
+# 创建控制台处理器
+console_handler = logging.StreamHandler()
+console_handler.setLevel(log_level)
+console_handler.setFormatter(log_formatter)
+root_logger.addHandler(console_handler)
+
+# 创建文件处理器（使用RotatingFileHandler）
+file_handler = RotatingFileHandler(
+    log_file_full_path,
+    maxBytes=log_file_max_size * 1024 * 1024,  # 转换为字节
+    backupCount=5,  # 保留5个备份文件
+    encoding='utf-8'
+)
+file_handler.setLevel(log_level)
+file_handler.setFormatter(log_formatter)
+root_logger.addHandler(file_handler)
+
+# 专门控制pymodbus的日志级别
+pymodbus_logger = logging.getLogger('pymodbus')
+pymodbus_logger.setLevel(logging.WARNING)
+logging.getLogger('pymodbus.logging').setLevel(logging.WARNING)
+logging.getLogger('pymodbus.client').setLevel(logging.WARNING)
+logging.getLogger('pymodbus.server').setLevel(logging.WARNING)
+
+# 控制HTTP客户端日志级别（减少HTTP请求调试信息）
+logging.getLogger('httpx').setLevel(logging.WARNING)
+logging.getLogger('httpcore').setLevel(logging.WARNING)
+logging.getLogger('httpx.http2').setLevel(logging.WARNING)
+logging.getLogger('httpx.connection').setLevel(logging.WARNING)
+
+print(f"日志配置完成 - 级别: {log_level_str}, 文件: {log_file_full_path}")
 if log_level >= logging.INFO:
-    # 设置根日志级别
-    logging.basicConfig(
-        level=log_level,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S'
-    )
-    
-    # 专门控制pymodbus的日志级别
-    pymodbus_logger = logging.getLogger('pymodbus')
-    pymodbus_logger.setLevel(logging.WARNING)
-    logging.getLogger('pymodbus.logging').setLevel(logging.WARNING)
-    logging.getLogger('pymodbus.client').setLevel(logging.WARNING)
-    logging.getLogger('pymodbus.server').setLevel(logging.WARNING)
-    
-    # 控制HTTP客户端日志级别（减少HTTP请求调试信息）
-    logging.getLogger('httpx').setLevel(logging.WARNING)
-    logging.getLogger('httpcore').setLevel(logging.WARNING)
-    logging.getLogger('httpx.http2').setLevel(logging.WARNING)
-    logging.getLogger('httpx.connection').setLevel(logging.WARNING)
-    
-    print(f"已预先禁用pymodbus和HTTP客户端调试日志输出，主日志级别: {log_level_str}")
-else:
-    # 如果是debug级别，保持默认配置
-    logging.basicConfig(
-        level=log_level,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S'
-    )
+    print(f"已预先禁用pymodbus和HTTP客户端调试日志输出")
 
 from websocket.websocket_server import WebSocketServer
 from websocket.connection_manager import ConnectionManager

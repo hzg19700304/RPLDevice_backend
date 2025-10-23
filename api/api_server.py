@@ -566,24 +566,32 @@ class APIServer:
             if start_dt >= end_dt:
                 raise HTTPException(status_code=400, detail="开始时间必须早于结束时间")
             
-            # 验证分页参数
+            # 验证分页参数 - 移除page_size限制，允许查询任意数量数据
             if page < 1:
                 raise HTTPException(status_code=400, detail="页码必须大于等于1")
-            if page_size < 1 or page_size > 100:
-                raise HTTPException(status_code=400, detail="每页条数必须在1-100之间")
+            # 不再限制page_size，允许查询上万条数据
             
             # 计算偏移量
             offset = (page - 1) * page_size
             
-            # 从数据库查询实时数据
-            real_time_data = await self.database_api.get_real_time_data(
-                device_id=None,  # 查询所有设备
-                parameter_name=param_name,
-                start_time=start_dt,
-                end_time=end_dt,
-                limit=page_size,
-                offset=offset
-            )
+            # 从数据库查询实时数据 - 如果page_size <= 0则查询所有数据
+            if page_size <= 0:
+                # 查询所有数据，不限制数量
+                real_time_data = await self.database_api.get_real_time_data_unlimited(
+                    parameter_name=param_name,
+                    start_time=start_dt,
+                    end_time=end_dt
+                )
+            else:
+                # 分页查询
+                real_time_data = await self.database_api.get_real_time_data(
+                    device_id=None,  # 查询所有设备
+                    parameter_name=param_name,
+                    start_time=start_dt,
+                    end_time=end_dt,
+                    limit=page_size,
+                    offset=offset
+                )
             
             # 验证查询结果
             if not real_time_data:
@@ -673,24 +681,33 @@ class APIServer:
             if start_dt >= end_dt:
                 raise HTTPException(status_code=400, detail="开始时间必须早于结束时间")
             
-            # 验证分页参数
+            # 验证分页参数 - 移除page_size限制，允许查询任意数量数据
             if page < 1:
                 raise HTTPException(status_code=400, detail="页码必须大于等于1")
-            if page_size < 1 or page_size > 100:
-                raise HTTPException(status_code=400, detail="每页条数必须在1-100之间")
+            # 不再限制page_size，允许查询上万条数据
             
             # 计算偏移量
             offset = (page - 1) * page_size
             
-            # 从数据库查询事件记录
-            event_records = await self.database_api.get_event_records(
-                device_id=device_id,
-                event_type=event_type,
-                start_time=start_dt,
-                end_time=end_dt,
-                limit=page_size,
-                offset=offset
-            )
+            # 从数据库查询事件记录 - 如果page_size <= 0则查询所有数据
+            if page_size <= 0:
+                # 查询所有数据，不限制数量
+                event_records = await self.database_api.get_event_records_unlimited(
+                    device_id=device_id,
+                    event_type=event_type,
+                    start_time=start_dt,
+                    end_time=end_dt
+                )
+            else:
+                # 分页查询
+                event_records = await self.database_api.get_event_records(
+                    device_id=device_id,
+                    event_type=event_type,
+                    start_time=start_dt,
+                    end_time=end_dt,
+                    limit=page_size,
+                    offset=offset
+                )
             
             # 验证查询结果
             if not event_records:

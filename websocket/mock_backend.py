@@ -68,34 +68,34 @@ class MockBackendServer:
         }
     
     def _init_analog_data(self):
-        """初始化模拟量数据"""
+        """初始化模拟量数据 - 匹配数据库和前端期望的SA1/SA2/SV1/SV2参数"""
         return [
             {
                 "reg_addr": "0x0006",
-                "name": "最大极化电位",
-                "raw_value": 255,
-                "physical_value": 25.5,
-                "unit": "V"
-            },
-            {
-                "reg_addr": "0x0008", 
-                "name": "支路1电流",
+                "name": "轨地电流SA1",
                 "raw_value": 120,
                 "physical_value": 12.0,
                 "unit": "A"
             },
             {
-                "reg_addr": "0x0009",
-                "name": "支路2电流", 
+                "reg_addr": "0x0007", 
+                "name": "可控硅电流SA2",
                 "raw_value": 130,
                 "physical_value": 13.0,
                 "unit": "A"
             },
             {
-                "reg_addr": "0x000A",
-                "name": "支路电压1",
+                "reg_addr": "0x0008",
+                "name": "轨地电压SV1", 
                 "raw_value": 2200,
                 "physical_value": 220.0,
+                "unit": "V"
+            },
+            {
+                "reg_addr": "0x0009",
+                "name": "轨地电压SV2",
+                "raw_value": 2150,
+                "physical_value": 215.0,
                 "unit": "V"
             }
         ]

@@ -82,10 +82,12 @@ class DatabaseAPI:
                 query = query.where(StatusHistory.timestamp <= end_time)
             
             # 按时间倒序排列
-            query = query.order_by(desc(StatusHistory.timestamp))
+            query = query.order_by(asc(StatusHistory.timestamp))
             
             # 添加分页
             query = query.limit(limit).offset(offset)
+            
+            logger.info(f"执行查询: {query}")
             
             result = session.execute(query)
             return result.scalars().all()
@@ -94,7 +96,7 @@ class DatabaseAPI:
     
     async def get_real_time_data(
         self,
-        device_id: str,
+        device_id: Optional[str] = None,
         parameter_name: Optional[str] = None,
         start_time: Optional[datetime] = None,
         end_time: Optional[datetime] = None,
@@ -130,6 +132,88 @@ class DatabaseAPI:
             logger.error(f"获取实时数据失败: {e}")
             return []
     
+    async def get_real_time_data_unlimited(
+        self,
+        parameter_name: Optional[str] = None,
+        start_time: Optional[datetime] = None,
+        end_time: Optional[datetime] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        获取实时数据（无数量限制）
+        
+        Args:
+            parameter_name: 参数名称
+            start_time: 开始时间
+            end_time: 结束时间
+            
+        Returns:
+            List[Dict[str, Any]]: 实时数据列表（无数量限制）
+        """
+        try:
+            # logger.info(f"=== 异步无限制查询开始 ===")
+            # logger.info(f"查询参数 - parameter_name: {parameter_name}")
+            # logger.info(f"时间范围 - start_time: {start_time}, end_time: {end_time}")
+            
+            # 使用同步方式执行查询
+            loop = asyncio.get_event_loop()
+            records = await loop.run_in_executor(
+                self.database_manager.thread_pool,
+                self._sync_get_real_time_data_unlimited,
+                parameter_name, start_time, end_time
+            )
+            
+            # logger.info(f"异步查询结果数量: {len(records)}")
+            # if records:
+                # logger.info(f"异步查询第一条记录时间: {records[0].timestamp}, 最后一条记录时间: {records[-1].timestamp}")
+            # logger.info(f"=== 异步无限制查询结束 ===")
+            
+            return [self._real_time_data_to_dict(record) for record in records]
+                
+        except Exception as e:
+            logger.error(f"获取无限制实时数据失败: {e}")
+            return []
+    
+    def _sync_get_real_time_data_unlimited(self, parameter_name, start_time, end_time):
+        """同步获取实时数据（无数量限制）"""
+        session = self.database_manager.get_session()
+        try:
+            query = select(RealTimeData)
+            
+            # 添加过滤条件
+            # if device_id:
+            #     query = query.where(RealTimeData.device_id == device_id)
+            
+            if parameter_name:
+                query = query.where(RealTimeData.parameter_name == parameter_name)
+            
+            if start_time:
+                query = query.where(RealTimeData.timestamp >= start_time)
+            
+            if end_time:
+                query = query.where(RealTimeData.timestamp <= end_time)
+            
+            # 按时间倒序排列，不限制数量
+            query = query.order_by(asc(RealTimeData.timestamp)) 
+            
+            # 调试信息：打印查询语句和参数
+            # print(f"=== 无限制查询SQL开始 ===")
+            # print(f"查询对象: {query}")
+            # print(f"查询参数 - parameter_name: {parameter_name}")
+            # print(f"时间范围 - start_time: {start_time}, end_time: {end_time}")
+            
+            result = session.execute(query)
+            records = result.scalars().all()
+            
+            # 调试信息：打印查询结果数量
+            # print(f"查询结果数量: {len(records)}")
+            # if records:
+            #     print(f"第一条记录时间: {records[0].timestamp}, 最后一条记录时间: {records[-1].timestamp}")
+            # print(f"=== 无限制查询SQL结束 ===") 
+            
+            return records
+        finally:
+            session.close()
+    
     def _sync_get_real_time_data(self, device_id, parameter_name, start_time, end_time, limit, offset):
         """同步获取实时数据"""
         session = self.database_manager.get_session()
@@ -137,7 +221,8 @@ class DatabaseAPI:
             query = select(RealTimeData)
             
             # 添加过滤条件
-            query = query.where(RealTimeData.device_id == device_id)
+            if device_id:
+                query = query.where(RealTimeData.device_id == device_id)
             
             if parameter_name:
                 query = query.where(RealTimeData.parameter_name == parameter_name)
@@ -149,7 +234,7 @@ class DatabaseAPI:
                 query = query.where(RealTimeData.timestamp <= end_time)
             
             # 按时间倒序排列
-            query = query.order_by(desc(RealTimeData.timestamp))
+            query = query.order_by(asc(RealTimeData.timestamp))
             
             # 添加分页
             query = query.limit(limit).offset(offset)
@@ -198,6 +283,69 @@ class DatabaseAPI:
         except Exception as e:
             logger.error(f"获取事件记录失败: {e}")
             return []
+    
+    async def get_event_records_unlimited(
+        self,
+        device_id: Optional[str] = None,
+        event_type: Optional[str] = None,
+        severity: Optional[str] = None,
+        start_time: Optional[datetime] = None,
+        end_time: Optional[datetime] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        获取事件记录（无数量限制）
+        
+        Args:
+            device_id: 设备ID
+            event_type: 事件类型
+            severity: 严重程度
+            start_time: 开始时间
+            end_time: 结束时间
+            
+        Returns:
+            List[Dict[str, Any]]: 事件记录列表（无数量限制）
+        """
+        try:
+            # 使用同步方式执行查询
+            loop = asyncio.get_event_loop()
+            records = await loop.run_in_executor(
+                self.database_manager.thread_pool,
+                self._sync_get_event_records_unlimited,
+                device_id, event_type, start_time, end_time
+            )
+            
+            return [self._event_record_to_dict(record) for record in records]
+                
+        except Exception as e:
+            logger.error(f"获取无限制事件记录失败: {e}")
+            return []
+    
+    def _sync_get_event_records_unlimited(self, device_id, event_type, start_time, end_time):
+        """同步获取事件记录（无数量限制）"""
+        session = self.database_manager.get_session()
+        try:
+            query = select(EventRecords)
+            
+            # 添加过滤条件
+            if device_id:
+                query = query.where(EventRecords.device_id == device_id)
+            
+            if event_type:
+                query = query.where(EventRecords.event_type == event_type)
+            
+            if start_time:
+                query = query.where(EventRecords.event_time >= start_time)
+            
+            if end_time:
+                query = query.where(EventRecords.event_time <= end_time)
+            
+            # 按时间倒序排列，不限制数量
+            query = query.order_by(desc(EventRecords.event_time))
+            
+            result = session.execute(query)
+            return result.scalars().all()
+        finally:
+            session.close()
     
     def _sync_get_event_records(self, device_id, event_type, start_time, end_time, limit, offset):
         """同步获取事件记录"""
@@ -589,8 +737,7 @@ class DatabaseAPI:
             'timestamp': record.timestamp.isoformat(),
             'parameter_name': record.parameter_name,
             'value': record.value,
-            'unit': record.unit,
-            'quality': record.quality
+            'unit': record.unit
         }
     
     def _event_record_to_dict(self, record: EventRecords) -> Dict[str, Any]:

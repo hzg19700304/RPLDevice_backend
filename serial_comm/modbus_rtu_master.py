@@ -16,6 +16,13 @@ import inspect
 from dataclasses import dataclass, field
 from typing import List, Optional, Union, Any
 
+# 导入配置管理器
+try:
+    from config.config_manager import ConfigManager
+    CONFIG_AVAILABLE = True
+except ImportError:
+    CONFIG_AVAILABLE = False
+
 # 导入pymodbus 3.11+
 try:
     from pymodbus.client import ModbusSerialClient
@@ -71,6 +78,23 @@ class ModbusRtuMaster:
         self._api_tested = False
         self._convert_api_available = False
         self.port: Optional[str] = None  # 存储端口信息
+        
+        # 初始化配置管理器
+        self.config_manager = None
+        self.control_register_start = 0x2200  # 默认起始地址
+        self.control_register_end = 0x2237    # 默认结束地址
+        
+        if CONFIG_AVAILABLE:
+            try:
+                self.config_manager = ConfigManager()
+                # 从配置文件中读取控制参数寄存器地址范围
+                control_config = self.config_manager.get_section("HMI系统控制参数寄存器")
+                self.control_register_start = control_config.get("control_register_start_address", 0x2200)
+                control_register_count = control_config.get("control_register_count", 55)
+                self.control_register_end = self.control_register_start + control_register_count - 1
+                print(f"[OK] 已从配置文件加载控制参数寄存器地址范围: 0x{self.control_register_start:04X}-0x{self.control_register_end:04X}")
+            except Exception as e:
+                print(f"[WARN] 无法加载配置文件，使用默认控制参数寄存器地址范围: {e}")
 
     # ---------------- 连接管理 ----------------
     def open(
@@ -231,8 +255,8 @@ class ModbusRtuMaster:
         # 添加调试信息：记录成功的Modbus响应
         if func.startswith("read"):
             # print(f"✅ [Modbus读取成功] 功能码: {func}, 从站地址: {slave}, 寄存器地址: 0x{addr:04X}, 返回值: {trans.result}")
-            # 特殊调试：如果是读取控制参数区域（0x2200-0x2237），显示详细参数值
-            if addr >= 0x2200 and addr <= 0x2237 and isinstance(trans.result, list):
+            # 特殊调试：如果是读取控制参数区域，显示详细参数值
+            if addr >= self.control_register_start and addr <= self.control_register_end and isinstance(trans.result, list):
                 print(f"📊 [控制参数详情] 读取到 {len(trans.result)} 个寄存器:")
                 for i, value in enumerate(trans.result):
                     reg_addr = addr + i

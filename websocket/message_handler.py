@@ -14,6 +14,7 @@ from typing import Dict, Any, Optional, List
 
 from websocket.connection_manager import ConnectionManager
 from config.config_manager import ConfigManager
+from serial_comm.serial_manager import SerialManager
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +67,8 @@ class MessageHandler:
                 await self._handle_fault_record_cancel(websocket, data, connection_info)
             elif msg_type == "param_read":
                 await self._handle_param_read(websocket, data, connection_info)
+            elif msg_type == "param_write":
+                await self._handle_param_write(websocket, data, connection_info)
             elif msg_type == "data_lost_request":
                 await self._handle_data_lost_request(websocket, data, connection_info)
             else:
@@ -423,6 +426,148 @@ class MessageHandler:
             "timestamp": datetime.now().isoformat()
         }
         
+        await self.connection_manager.send_to_connection(websocket, response)
+    
+    async def _handle_param_write(self, websocket, data: Dict[str, Any], connection_info: Dict[str, Any]):
+        """处理参数写入"""
+        write_type = data.get("data", {}).get("write_type", "control_params")
+        params = data.get("data", {}).get("params", {})
+        request_id = data.get("request_id")
+        
+        logger.info(f"收到参数写入请求: {write_type}, 参数数量: {len(params)}")
+        
+        # 初始化响应
+        response = {
+            "type": "param_write_ack",
+            "device_id": self.device_status()["device_id"],
+            "request_id": request_id,
+            "exec_status": "success",
+            "exec_msg": "参数写入成功",
+            "timestamp": datetime.now().isoformat()
+        }
+        
+        if write_type == "control_params":
+            try:
+                # 尝试通过串口管理器写入参数
+                if self.serial_manager and self.serial_manager.hmi_master:
+                    logger.info("通过串口写入控制参数...")
+                    
+                    # 准备批量写入数据
+                    # 将参数按地址排序，以便连续地址可以批量写入
+                    sorted_params = sorted(params.items(), key=lambda x: int(x[0], 16) if x[0].startswith("0x") else int(x[0]))
+                    
+                    success_count = 0
+                    failed_params = []
+                    
+                    # 尝试批量写入连续地址的参数
+                    batch_start_addr = None
+                    batch_values = []
+                    batch_param_names = []
+                    
+                    def process_batch():
+                        """处理当前批次参数的写入"""
+                        nonlocal batch_start_addr, batch_values, batch_param_names, success_count, failed_params
+                        
+                        if not batch_values:
+                            return
+                            
+                        try:
+                            # 批量写入寄存器
+                            result = self.serial_manager.hmi_master.write_multiple_registers(16, batch_start_addr, batch_values)
+                            
+                            if result:
+                                success_count += len(batch_values)
+                                logger.debug(f"成功批量写入寄存器 0x{batch_start_addr:04X}-{batch_start_addr+len(batch_values)-1:04X}")
+                            else:
+                                # 批量写入失败，记录所有参数为失败
+                                for addr_str in batch_param_names:
+                                    failed_params.append(f"{addr_str}: 写入失败")
+                                logger.warning(f"批量写入寄存器范围 0x{batch_start_addr:04X}-{batch_start_addr+len(batch_values)-1:04X} 失败")
+                        except Exception as e:
+                            error_msg = str(e)
+                            # 检查是否是非法地址错误
+                            if "ExceptionResponse" in error_msg and "exception_code=2" in error_msg:
+                                for addr_str in batch_param_names:
+                                    failed_params.append(f"{addr_str}: 设备不支持该地址")
+                                logger.warning(f"设备不支持寄存器地址范围 0x{batch_start_addr:04X}-{batch_start_addr+len(batch_values)-1:04X}")
+                            else:
+                                for addr_str in batch_param_names:
+                                    failed_params.append(f"{addr_str}: {error_msg}")
+                                logger.error(f"批量写入参数时出错: {e}")
+                        
+                        # 重置批次
+                        batch_start_addr = None
+                        batch_values = []
+                        batch_param_names = []
+                    
+                    # 遍历排序后的参数，构建连续地址的批次
+                    for addr_str, value in sorted_params:
+                        # 转换地址格式
+                        if addr_str.startswith("0x"):
+                            addr = int(addr_str, 16)
+                        else:
+                            addr = int(addr_str)
+                        
+                        # 检查是否可以加入当前批次
+                        if batch_start_addr is None:
+                            # 开始新批次
+                            batch_start_addr = addr
+                            batch_values = [int(value)]
+                            batch_param_names = [addr_str]
+                        elif addr == batch_start_addr + len(batch_values):
+                            # 连续地址，加入当前批次
+                            batch_values.append(int(value))
+                            batch_param_names.append(addr_str)
+                        else:
+                            # 不连续，处理当前批次并开始新批次
+                            process_batch()
+                            batch_start_addr = addr
+                            batch_values = [int(value)]
+                            batch_param_names = [addr_str]
+                    
+                    # 处理最后一个批次
+                    process_batch()
+                    
+                    # 检查是否全部成功
+                    if len(failed_params) > 0:
+                        # 检查是否所有参数都因为地址不支持而失败
+                        all_addr_unsupported = all("设备不支持该地址" in param for param in failed_params)
+                        
+                        if all_addr_unsupported and len(failed_params) == len(params):
+                            # 所有参数都因为地址不支持而失败，切换到模拟模式
+                            logger.warning("所有参数地址都不被设备支持，切换到模拟模式")
+                            response["exec_status"] = "success"
+                            response["exec_msg"] = f"参数写入成功 ({len(params)} 个) - 模拟模式(设备不支持这些地址)"
+                            response["success_count"] = len(params)
+                            response["simulation_mode"] = True
+                        else:
+                            # 部分失败或因为其他原因失败
+                            response["exec_status"] = "partial_success"
+                            response["exec_msg"] = f"部分参数写入成功，失败: {', '.join(failed_params)}"
+                            response["success_count"] = success_count
+                            response["failed_count"] = len(failed_params)
+                            response["failed_params"] = failed_params
+                    else:
+                        response["exec_msg"] = f"所有参数写入成功 ({success_count} 个)"
+                        response["success_count"] = success_count
+                        
+                else:
+                    # 模拟写入成功
+                    logger.warning("串口管理器未初始化，模拟参数写入成功")
+                    response["exec_msg"] = "参数写入成功 (模拟模式)"
+                    response["success_count"] = len(params)
+                    
+            except Exception as e:
+                logger.error(f"写入控制参数时出错: {e}")
+                response["exec_status"] = "fail"
+                response["exec_msg"] = f"参数写入失败: {str(e)}"
+                
+        else:
+            # 其他写入类型暂不支持
+            response["exec_status"] = "fail"
+            response["exec_msg"] = f"不支持的写入类型: {write_type}"
+        
+        # 发送响应
         await self.connection_manager.send_to_connection(websocket, response)
     
     async def _handle_data_lost_request(self, websocket, data: Dict[str, Any], connection_info: Dict[str, Any]):

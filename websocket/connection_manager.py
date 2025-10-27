@@ -167,7 +167,7 @@ class ConnectionManager:
         """向指定连接发送消息"""
         if websocket not in self.active_connections:
             return False
-        
+        logger.info(f"向连接 {websocket} 发送消息: {message}")
         try:
             await websocket.send(json.dumps(message, ensure_ascii=False))
             self.active_connections[websocket]['message_count_sent'] += 1

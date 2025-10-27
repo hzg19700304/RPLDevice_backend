@@ -50,31 +50,44 @@ class MessageHandler:
             connection_info['message_count_received'] += 1
             self.connection_manager.connection_stats['total_messages_received'] += 1
             
+            # 添加调试信息
             logger.info(f"收到消息类型: {msg_type}, 连接: {connection_info['connection_id']}")
+            logger.info(f"消息内容: {message}")
             
             # 根据消息类型分发处理
             if msg_type == "device_register":
+                logger.info("处理设备注册消息")
                 await self._handle_device_registration(websocket, data, connection_info)
             elif msg_type == "heartbeat":
+                logger.info("处理心跳消息")
                 await self._handle_heartbeat(websocket, data, connection_info)
             elif msg_type == "control_cmd":
+                logger.info("处理控制指令消息")
                 await self._handle_control_command(websocket, data, connection_info)
             elif msg_type == "fault_record_list":
+                logger.info("处理故障录波目录查询消息")
                 await self._handle_fault_record_list(websocket, data, connection_info)
             elif msg_type == "fault_record_read":
+                logger.info("处理故障录波读取消息")
                 await self._handle_fault_record_read(websocket, data, connection_info)
             elif msg_type == "fault_record_cancel":
+                logger.info("处理故障录波取消消息")
                 await self._handle_fault_record_cancel(websocket, data, connection_info)
             elif msg_type == "param_read":
+                logger.info("处理参数读取消息")
                 await self._handle_param_read(websocket, data, connection_info)
             elif msg_type == "param_write":
+                logger.info("处理参数写入消息")
                 await self._handle_param_write(websocket, data, connection_info)
             elif msg_type == "data_lost_request":
+                logger.info("处理数据丢失请求消息")
                 await self._handle_data_lost_request(websocket, data, connection_info)
             else:
+                logger.warning(f"未知消息类型: {msg_type}")
                 await self._send_error_response(websocket, 400, f"未知消息类型: {msg_type}")
                 
         except json.JSONDecodeError:
+            logger.error(f"JSON解析错误: {message}")
             await self._send_error_response(websocket, 400, "无效的JSON格式")
         except Exception as e:
             logger.error(f"处理消息时出错: {e}")
@@ -253,20 +266,39 @@ class MessageHandler:
             connection_info: Dict[str, Any]
     ):
         """处理故障录波目录查询"""
-        response = {
-            "type": "fault_record_list_ack",
-            "device_id": self.device_status()["device_id"],
-            "request_id": data.get("request_id"),
-            "data": {
-                "total_records": len(self.fault_records),
-                "max_capacity": 100,
-                "record_length": 3907,
-                "records": self.fault_records
-            },
-            "timestamp": datetime.now().isoformat()
-        }
-        
-        await self.connection_manager.send_to_connection(websocket, response)
+        # 尝试从串口读取故障记录目录信息（寄存器0x0300-0x0303）
+        try:
+            if self.serial_manager and self.serial_manager.hmi_master:
+                # 从串口读取4个寄存器的值
+                registers = self.serial_manager.hmi_master.read_holding_registers(16, 0x0300, 4)
+                if registers and len(registers) >= 4:
+                    total_records = registers[0]  # 0x0300: 当前故障录波记录数
+                    record_length = registers[1]  # 0x0301: 记录长度
+                    max_capacity = registers[3]  # 0x0303: 最多存放记录数
+                    
+                    response = {
+                        "type": "fault_record_list_ack",
+                        "device_id": self.device_status()["device_id"],
+                        "request_id": data.get("request_id"),
+                        "data": {
+                            "total_records": total_records,
+                            "record_length": record_length,
+                            "max_capacity": max_capacity
+                        },
+                        "timestamp": datetime.now().isoformat()
+                    }
+                    
+                    await self.connection_manager.send_to_connection(websocket, response)
+                else:
+                    # 串口读取失败，返回错误信息
+                    await self._send_error_response(websocket, 500, "读取故障记录目录信息失败：串口返回数据无效")
+            else:
+                # 串口管理器未初始化，返回错误信息
+                await self._send_error_response(websocket, 500, "读取故障记录目录信息失败：串口管理器未初始化")
+        except Exception as e:
+            logger.error(f"读取故障记录目录信息失败: {e}")
+            # 返回错误信息
+            await self._send_error_response(websocket, 500, f"读取故障记录目录信息失败: {str(e)}")
     
     async def _handle_fault_record_read(
             self, 

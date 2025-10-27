@@ -364,22 +364,41 @@ class MockBackendServer:
     
     async def handle_fault_record_list(self, websocket, data):
         """处理故障录波目录查询"""
-        request_id = data.get("request_id")
-        
-        response = {
-            "type": "fault_record_list_ack",
-            "device_id": self.device_status["device_id"],
-            "request_id": request_id,
-            "data": {
-                "total_records": len(self.fault_records),
-                "max_capacity": 100,
-                "record_length": 3907,
-                "records": self.fault_records
-            },
-            "timestamp": datetime.now().isoformat()
-        }
-        
-        await websocket.send(json.dumps(response, ensure_ascii=False))
+        try:
+            request_id = data.get("request_id")
+            if not request_id:
+                raise ValueError("缺少request_id参数")
+            
+            # 模拟从寄存器0x0300-0x0303读取的值
+            total_records = len(self.fault_records)  # 0x0300: 当前故障录波记录数
+            record_length = 3907                     # 0x0301: 记录长度
+            max_capacity = 100                       # 0x0303: 最多存放记录数
+            
+            response = {
+                "type": "fault_record_list_ack",
+                "device_id": self.device_status["device_id"],
+                "request_id": request_id,
+                "data": {
+                    "total_records": total_records,
+                    "record_length": record_length,
+                    "max_capacity": max_capacity
+                },
+                "timestamp": datetime.now().isoformat(),
+                "status": "success"
+            }
+            
+            await websocket.send(json.dumps(response, ensure_ascii=False))
+            
+        except Exception as e:
+            error_response = {
+                "type": "fault_record_list_ack",
+                "device_id": self.device_status["device_id"],
+                "request_id": request_id,
+                "error": str(e),
+                "timestamp": datetime.now().isoformat(),
+                "status": "error"
+            }
+            await websocket.send(json.dumps(error_response, ensure_ascii=False))
     
     async def handle_fault_record_read(self, websocket, data):
         """处理故障录波读取"""
@@ -495,16 +514,24 @@ class MockBackendServer:
         if not self.connected_clients:
             return
             
+        # 获取当前开关量状态
+        km1_status = self.digital_data["output"].get("bit0", 0)
+        
         system_status_data = {
             "type": "system_status",
             "device_id": self.device_status["device_id"],
             "timestamp": datetime.now().isoformat(),
             "seq_num": self._get_next_seq_num(),
             "data": {
-                "bit5": 0,   # 故障状态：0=正常
-                "bit7": 1,   # 参数状态：1=正确
-                "bit8": 0,   # KM1状态：0=恢复
-                "bit9": 1    # 存储器：1=正常
+                "system_status": {
+                    "bit5": 0,   # 故障状态：0=正常
+                    "bit7": 1,   # 参数状态：1=正确
+                    "bit8": 0,   # KM1状态：0=恢复
+                    "bit9": 1    # 存储器：1=正常
+                },
+                "switch_output": {
+                    "bit0": km1_status  # KM1状态
+                }
             },
             "status": "success"
         }

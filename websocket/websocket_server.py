@@ -74,10 +74,14 @@ class WebSocketServer:
     
     async def handle_connection(self, websocket):
         """处理WebSocket连接"""
+        logger.info("新的WebSocket连接请求")
+        
         # 简化连接处理 - 直接接受所有连接
         connection_info = await self.connection_manager.register_connection(
             websocket, {"user_type": "test", "device_id": "test_device"}
         )
+        
+        logger.info(f"连接已注册，ID: {connection_info['connection_id']}")
         
         # 发送连接确认
         await self._send_connect_ack(websocket, connection_info)
@@ -86,7 +90,9 @@ class WebSocketServer:
         
         try:
             # 处理消息循环
+            logger.info(f"开始监听连接 {connection_info['connection_id']} 的消息")
             async for message in websocket:
+                logger.info(f"从连接 {connection_info['connection_id']} 收到原始消息: {message}")
                 await self.message_handler.handle_message(websocket, message, connection_info)
                 
         except websockets.exceptions.ConnectionClosed:
@@ -95,6 +101,7 @@ class WebSocketServer:
             logger.error(f"处理连接时出错: {e}")
         finally:
             # 注销连接
+            logger.info(f"注销连接: {connection_info['connection_id']}")
             await self.connection_manager.unregister_connection(websocket)
     
     def _parse_query_params(self, path: str) -> Dict[str, str]:

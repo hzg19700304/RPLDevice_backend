@@ -29,8 +29,8 @@ log_file_max_size = int(log_config.get("日志文件最大大小", "10"))  # MB
 
 # 转换日志级别字符串为logging常量
 log_level_map = {
-    "debug": logging.WARNING,
-    "info": logging.WARNING,
+    "debug": logging.DEBUG,
+    "info": logging.INFO,
     "warning": logging.WARNING,
     "warn": logging.WARNING,
     "error": logging.ERROR,
@@ -86,8 +86,16 @@ logging.getLogger('httpcore').setLevel(logging.WARNING)
 logging.getLogger('httpx.http2').setLevel(logging.WARNING)
 logging.getLogger('httpx.connection').setLevel(logging.WARNING)
 
+# 控制WebSocket服务器日志级别（减少WebSocket消息调试信息）
+logging.getLogger('websockets.server').setLevel(logging.WARNING)
+logging.getLogger('websockets.client').setLevel(logging.WARNING)
+logging.getLogger('websockets.protocol').setLevel(logging.WARNING)
+
+# 控制WebSocket数据推送器日志级别（减少数据缓存调试信息）
+logging.getLogger('websocket.data_pusher').setLevel(logging.INFO)
+
 print(f"日志配置完成 - 级别: {log_level_str}, 文件: {log_file_full_path}")
-if log_level >= logging.INFO:
+if log_level > logging.INFO:
     print(f"已预先禁用pymodbus和HTTP客户端调试日志输出")
 
 from websocket.websocket_server import WebSocketServer

@@ -205,14 +205,15 @@ class ConnectionManager:
                 last_heartbeat = connection_info['last_heartbeat']
                 time_since_last_heartbeat = (datetime.now() - last_heartbeat).total_seconds()
                 
-                # 如果超过60秒没有心跳，断开连接
-                if time_since_last_heartbeat > 60:
-                    logger.warning(f"连接 {connection_id} 心跳超时，即将断开")
+                # 🔥 优化心跳超时时间：从60秒延长到120秒，适应长时间操作
+                if time_since_last_heartbeat > 120:
+                    logger.warning(f"连接 {connection_id} 心跳超时，即将断开 (超时时间: {time_since_last_heartbeat:.1f}s)")
                     
                     # 发送连接丢失通知
                     connection_lost_msg = {
                         "type": "connection_lost",
                         "reason": "心跳超时",
+                        "timeout_seconds": time_since_last_heartbeat,
                         "timestamp": datetime.now().isoformat()
                     }
                     
@@ -224,6 +225,9 @@ class ConnectionManager:
                     # 断开连接
                     await self.unregister_connection(websocket_to_check)
                     break
+                elif time_since_last_heartbeat > 90:
+                    # 🔥 添加预警机制：超过90秒记录警告，但不断开
+                    logger.warning(f"连接 {connection_id} 心跳时间偏长: {time_since_last_heartbeat:.1f}s，但仍在容忍范围内")
                     
         except asyncio.CancelledError:
             # 任务被取消，正常退出

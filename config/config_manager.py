@@ -267,6 +267,10 @@ class ConfigManager:
         """获取界面布局配置"""
         return self.get_section("界面布局配置")
 
+    def get_fault_code_mapping(self) -> Dict[str, str]:
+        """获取故障码映射配置"""
+        return self.get_section("HMI故障点表")
+
     def reload_config(self) -> None:
         """重新加载配置文件"""
         self._config_data.clear()

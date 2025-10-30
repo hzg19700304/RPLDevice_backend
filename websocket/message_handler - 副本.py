@@ -318,129 +318,73 @@ class MessageHandler:
             data: Dict[str, Any], 
             connection_info: Dict[str, Any]
     ):
-        """处理故障录波读取 - 修复 request_id 提取问题"""
-        
-        # 🔥🔥🔥 关键修复: 正确提取 request_id 🔥🔥🔥
-        # 前端发送的消息格式: 
-        # {"type": "fault_record_read", "data": {"request_id": "...", "record_id": 0}}
-        
-        # 首先尝试从 data.data 中获取
-        request_id = None
-        record_id = 0
-        
-        if "data" in data and isinstance(data["data"], dict):
-            request_id = data["data"].get("request_id")
-            record_id = data["data"].get("record_id", 0)
-        
-        # 如果没有获取到,尝试从根层级获取(兼容其他格式)
-        if not request_id:
-            request_id = data.get("request_id")
-        if not record_id:
-            record_id = data.get("record_id", 0)
-        
-        # 🔥 关键修复: 统一使用字符串类型的 request_id
-        request_id_str = str(request_id) if request_id else "unknown"
-        
-        # 📝 详细日志
-        logger.info("=" * 80)
-        logger.info(f"📥 收到故障录波读取请求")
-        logger.info(f"📥 原始消息 data: {data}")
-        logger.info(f"📥 data 的类型: {type(data).__name__}")
-        logger.info(f"📥 data 的键: {list(data.keys())}")
-        if "data" in data:
-            logger.info(f"📥 data['data'] 的值: {data['data']}")
-            logger.info(f"📥 data['data'] 的类型: {type(data['data']).__name__}")
-        logger.info(f"📥 解析后的 request_id: '{request_id_str}'")
-        logger.info(f"📥 解析后的 record_id: {record_id}")
-        logger.info("=" * 80)
-        
-        # 验证 request_id
-        if request_id_str == "unknown" or request_id_str == "None":
-            logger.error("❌ 未找到有效的 request_id,无法处理读取请求")
-            error_response = {
-                "type": "fault_record_read_error",
-                "device_id": self.device_status()["device_id"],
-                "error": "缺少 request_id 参数或 request_id 无效",
-                "received_data": str(data),
-                "timestamp": datetime.now().isoformat()
-            }
-            await self.connection_manager.send_to_connection(websocket, error_response)
-            return
+        """处理故障录波读取 - 使用真实串口数据"""
+        request_id = data.get("request_id")
+        record_id = data.get("record_id", 0)
         
         # 检查是否已有相同request_id的任务在运行
-        if request_id_str in self.fault_record_tasks and not self.fault_record_tasks[request_id_str].done():
-            logger.warning(f"🔄 已存在request_id为 '{request_id_str}' 的故障录波读取任务,忽略重复请求")
+        if request_id in self.fault_record_tasks and not self.fault_record_tasks[request_id].done():
+            logger.warning(f"🔄 已存在request_id为 {request_id} 的故障录波读取任务，忽略重复请求")
             return
         
-        # 🔥 关键修复: 清除旧的取消标志(如果存在)
-        if request_id_str in self.fault_record_cancel_flags:
-            del self.fault_record_cancel_flags[request_id_str]
-            logger.info(f"🧹 清除旧的取消标志: '{request_id_str}'")
-        
-        # 创建新的读取任务
-        task = asyncio.create_task(
-            self._execute_fault_record_read(websocket, data, connection_info, request_id_str)
-        )
-        self.fault_record_tasks[request_id_str] = task
+        # 创建新的读取任务 - 使用局部变量确保request_id不会丢失
+        task = asyncio.create_task(self._execute_fault_record_read(websocket, data, connection_info, request_id))
+        self.fault_record_tasks[request_id] = task
         
         # 设置任务完成时的清理回调
         def cleanup_task(task):
-            if request_id_str in self.fault_record_tasks:
-                del self.fault_record_tasks[request_id_str]
-                logger.info(f"🧹 清理完成request_id为 '{request_id_str}' 的故障录波读取任务")
-            # 也清理取消标志
-            if request_id_str in self.fault_record_cancel_flags:
-                del self.fault_record_cancel_flags[request_id_str]
-                logger.info(f"🧹 清理取消标志: '{request_id_str}'")
+            if request_id in self.fault_record_tasks:
+                del self.fault_record_tasks[request_id]
+                logger.info(f"🧹 清理完成request_id为 {request_id} 的故障录波读取任务")
         
         task.add_done_callback(cleanup_task)
-        logger.info(f"🚀 启动故障录波读取任务 - request_id: '{request_id_str}', record_id: {record_id}")
+        logger.info(f"🚀 启动故障录波读取任务 - request_id: {request_id}")
     
     async def _execute_fault_record_read(
             self, 
             websocket, 
             data: Dict[str, Any], 
             connection_info: Dict[str, Any],
-            request_id: str  # 🔥 注意: 这里确保是字符串类型
+            request_id: str
     ):
-        """实际执行故障录波读取的逻辑 - 完整修复版本"""
+        """实际执行故障录波读取的逻辑"""
         record_id = data.get("record_id", 0)
         
-        # 🔥 关键修复: 确保 request_id 是字符串类型
-        request_id_str = str(request_id)
-        
-        # 📝 调试日志:记录初始request_id
-        logger.info(f"🚀 _execute_fault_record_read 开始执行 - request_id: '{request_id_str}', record_id: {record_id}")
+        # 🔍 调试日志：记录初始request_id
+        logger.info(f"🚀 _execute_fault_record_read 开始执行 - request_id: {request_id}, data keys: {list(data.keys())}")
         
         # 获取配置信息
         fault_config = self.config_manager.get_section('HMI故障录波读取配置')
-        total_registers = int(fault_config.get('故障记录总寄存器数', 1207))
+        total_registers = int(fault_config.get('故障记录总寄存器数', 3907))
         record_data_points = int(fault_config.get('故障记录总数据点', 300))
-        wave_data_registers_per_group = int(fault_config.get('故障记录数据点寄存器数', 4))
+        wave_data_registers_per_group = int(fault_config.get('故障记录数据点寄存器数', 4))  # 从配置文件读取数据点寄存器数
         
-        # 根据测试文件,使用更合理的读取策略
-        fault_info_registers = int(fault_config.get('故障记录头寄存器数', 7))
-        total_wave_groups = record_data_points
+        # 根据测试文件，使用更合理的读取策略
+        # 第一次读取故障信息头寄存器数，后续每次读取wave_data_registers_per_group个寄存器（录波数据）
+        fault_info_registers = int(fault_config.get('故障记录头寄存器数', 7))  # 从配置文件读取故障信息头寄存器数
+        total_wave_groups = record_data_points  # 使用配置文件中读取的数据点数量
         total_read_registers = fault_info_registers + (wave_data_registers_per_group * total_wave_groups)
         
         # 发送开始读取确认
         start_response = {
             "type": "fault_record_read_start",
             "device_id": self.device_status()["device_id"],
-            "request_id": request_id_str,
+            "request_id": request_id,
             "total_registers": total_read_registers,
             "record_data_points": record_data_points,
-            "total_batches": total_wave_groups + 1,
-            "estimated_time": 300.0,
+            "total_batches": total_wave_groups + 1,  # 故障信息头 + 录波数据组数 = 301
+            "estimated_time": 300.0,  # 预计8秒完成（考虑多次读取）
             "timestamp": datetime.now().isoformat()
         }
-        await self.connection_manager.send_to_connection(websocket, start_response)
+        await self.connection_manager.send_to_connection(
+            websocket, start_response
+        )
         
         try:
             all_registers = []
             
-            # 第一步:读取故障信息头
-            logger.info(f"第一步:读取故障信息头({fault_info_registers}个寄存器)")
+            # 第一步：读取故障信息头（fault_info_registers个寄存器）
+            logger.info(f"第一步：读取故障信息头（{fault_info_registers}个寄存器）")
             fault_header = self.serial_manager.read_fault_record(
                 device_type='hmi',
                 record_id=record_id,
@@ -452,76 +396,41 @@ class MessageHandler:
                 raise Exception("故障信息头读取失败")
             
             all_registers.extend(fault_header)
-            logger.info(f"成功读取故障信息头:{len(fault_header)} 个寄存器")
+            logger.info(f"成功读取故障信息头：{len(fault_header)} 个寄存器")
             
-            # 发送进度更新(故障信息头完成)
+            # 发送进度更新（故障信息头完成）
             progress_response = {
                 "type": "fault_record_progress",
                 "device_id": self.device_status()["device_id"],
-                "request_id": request_id_str,
+                "request_id": request_id,
                 "current_batch": 1,
-                "total_batches": total_wave_groups + 1,
+                "total_batches": total_wave_groups + 1,  # 301
                 "percentage": int((1 / (total_wave_groups + 1)) * 100),
                 "timestamp": datetime.now().isoformat()
             }
-            await self.connection_manager.send_to_connection(websocket, progress_response)
+            await self.connection_manager.send_to_connection(
+                websocket, progress_response
+            )
             
-            # 第二步:分步读取录波数据
-            logger.info(f"第二步:读取录波数据(每次{wave_data_registers_per_group}个寄存器)")
-            current_offset = fault_info_registers
+            # 第二步：分步读取录波数据（每次wave_data_registers_per_group个寄存器）
+            logger.info(f"第二步：读取录波数据（每次{wave_data_registers_per_group}个寄存器）")
+            current_offset = fault_info_registers  # 录波数据从故障信息头寄存器数开始
             
-            # 进度日志控制
+            # 进度日志控制 - 每10%记录一次主要进度，每1%记录一次详细进度
             last_major_log_percentage = 0
             last_detail_log_percentage = 0
 
             for i in range(total_wave_groups):
-                # 🔥🔥🔥 关键修复: 在每次循环开始时立即检查取消标志 🔥🔥🔥
-                logger.debug(f"🔍 [循环 {i+1}/{total_wave_groups}] 检查取消标志")
-                logger.debug(f"🔍 request_id: '{request_id_str}'")
-                logger.debug(f"🔍 取消标志字典内容: {dict(self.fault_record_cancel_flags)}")
-                logger.debug(f"🔍 request_id_str 在字典中: {request_id_str in self.fault_record_cancel_flags}")
-                
-                # 使用 .get() 方法获取取消标志
-                is_cancelled = self.fault_record_cancel_flags.get(request_id_str, False)
-                logger.debug(f"🔍 is_cancelled 值: {is_cancelled} (类型: {type(is_cancelled).__name__})")
-                
-                # 🔥 关键检查: 如果被取消,立即停止
-                if is_cancelled:
-                    logger.info(f"🛑🛑🛑 检测到取消标志! 停止读取 - request_id: '{request_id_str}'")
-                    logger.info(f"🛑 当前进度: 第 {i+1}/{total_wave_groups} 组")
-                    
-                    # 发送取消通知
-                    cancel_response = {
-                        "type": "fault_record_cancelled",
-                        "device_id": self.device_status()["device_id"],
-                        "request_id": request_id_str,
-                        "cancelled_at_batch": i + 2,
-                        "cancelled_at_group": i + 1,
-                        "total_groups": total_wave_groups,
-                        "message": f"用户取消操作,已在第{i+1}组停止读取",
-                        "timestamp": datetime.now().isoformat()
-                    }
-                    await self.connection_manager.send_to_connection(websocket, cancel_response)
-                    
-                    # 清理取消标志
-                    if request_id_str in self.fault_record_cancel_flags:
-                        del self.fault_record_cancel_flags[request_id_str]
-                        logger.info(f"🧹 已清理取消标志: '{request_id_str}'")
-                    
-                    # 直接返回,结束整个读取流程
-                    logger.warning(f"🛑 录波数据读取在第{i+1}组被取消,已停止读取流程")
-                    return
-                
                 # 智能日志记录 - 减少重复日志
                 current_percentage = int(((i + 1) / total_wave_groups) * 100)
                 
                 # 每10%记录一次主要进度
                 if current_percentage >= last_major_log_percentage + 10:
-                    logger.info(f"进度:{current_percentage}% - 已读取 {i+1}/{total_wave_groups} 组录波数据")
+                    logger.info(f"进度：{current_percentage}% - 已读取 {i+1}/{total_wave_groups} 组录波数据")
                     last_major_log_percentage = current_percentage
-                # 每1%记录一次详细进度(但限制频率)
+                # 每1%记录一次详细进度（但限制频率）
                 elif current_percentage >= last_detail_log_percentage + 1 and i % 10 == 0:
-                    logger.debug(f"读取第 {i+1} 组录波数据({wave_data_registers_per_group}个寄存器)...")
+                    logger.debug(f"读取第 {i+1} 组录波数据（{wave_data_registers_per_group}个寄存器）...")
                     last_detail_log_percentage = current_percentage
                 
                 # 带重试机制的读取
@@ -538,45 +447,47 @@ class MessageHandler:
                         )
                         
                         if wave_data is not None and len(wave_data) > 0:
-                            # 读取成功,跳出重试循环
+                            # 读取成功，跳出重试循环
                             if retry > 0:
                                 logger.info(f"第 {i + 1} 组录波数据在第{retry + 1}次重试后读取成功")
                             break
                         else:
-                            # 读取结果为None或空,记录警告并继续重试
-                            logger.warning(f"第 {i + 1} 组录波数据第{retry + 1}次读取失败(无数据),准备重试...")
+                            # 读取结果为None或空，记录警告并继续重试
+                            logger.warning(f"第 {i + 1} 组录波数据第{retry + 1}次读取失败（无数据），准备重试...")
                             
                     except Exception as e:
-                        logger.warning(f"第 {i + 1} 组录波数据第{retry + 1}次读取异常:{e}")
+                        logger.warning(f"第 {i + 1} 组录波数据第{retry + 1}次读取异常：{e}")
                     
-                    # 如果不是最后一次重试,添加延迟后重试
+                    # 如果不是最后一次重试，添加延迟后重试
                     if retry < max_retries - 1:
-                        await asyncio.sleep(0.5 * (retry + 1))  # 递增延迟:0.5s, 1s, 1.5s
+                        await asyncio.sleep(0.5 * (retry + 1))  # 递增延迟：0.5s, 1s, 1.5s
                 
                 if wave_data is None:
-                    logger.error(f"❌ 第 {i + 1} 组录波数据在{max_retries}次重试后仍然读取失败!")
-                    logger.error(f"失败详情:从站地址=16, 记录ID={record_id}, 起始偏移={current_offset}, 长度={wave_data_registers_per_group}")
-                    logger.error(f"可能的故障原因:1)设备通信异常 2)Modbus地址超出范围 3)设备存储器损坏 4)电源/接线问题")
+                    logger.error(f"第 {i + 1} 组录波数据在{max_retries}次重试后仍然读取失败！")
+                    logger.error(f"失败详情：从站地址=16, 记录ID={record_id}, 起始偏移={current_offset}, 长度={wave_data_registers_per_group}（{wave_data_registers_per_group}个寄存器）")
+                    logger.error(f"可能的故障原因：1)设备通信异常 2)Modbus地址超出范围 3)设备存储器损坏 4)电源/接线问题")
                     
                     # 发送错误通知并结束整个读取流程
                     error_response = {
                         "type": "fault_record_error",
                         "device_id": self.device_status()["device_id"],
-                        "request_id": request_id_str,
-                        "error": f"第 {i + 1} 组录波数据读取失败(重试{max_retries}次),已停止读取",
+                        "request_id": request_id,
+                        "error": f"第 {i + 1} 组录波数据读取失败（重试{max_retries}次），已停止读取",
                         "failed_at_group": i + 1,
                         "total_groups": total_wave_groups,
                         "retry_count": max_retries,
                         "timestamp": datetime.now().isoformat()
                     }
-                    await self.connection_manager.send_to_connection(websocket, error_response)
+                    await self.connection_manager.send_to_connection(
+                        websocket, error_response
+                    )
                     
-                    # 清理取消标志(如果存在)
-                    if request_id_str in self.fault_record_cancel_flags:
-                        del self.fault_record_cancel_flags[request_id_str]
+                    # 清理取消标志（如果存在）
+                    if request_id in self.fault_record_cancel_flags:
+                        del self.fault_record_cancel_flags[request_id]
                     
                     # 直接结束整个读取流程
-                    logger.warning(f"录波数据读取在第{i+1}组失败,已停止读取流程")
+                    logger.warning(f"录波数据读取在第{i+1}组失败，已停止读取流程")
                     return
                 
                 all_registers.extend(wave_data)
@@ -584,47 +495,78 @@ class MessageHandler:
                 
                 # 只在详细日志模式下记录每组成功信息
                 if i % 10 == 0:  # 每10组记录一次
-                    logger.debug(f"成功读取第 {i+1} 组:{len(wave_data)} 个寄存器")
+                    logger.debug(f"成功读取第 {i+1} 组：{len(wave_data)} 个寄存器（{len(wave_data)}个数据寄存器）")
                 
-                # 发送进度更新
+                # 发送进度更新 - 修复进度计算精度问题
                 actual_percentage = min(99, int(((i + 2) / (total_wave_groups + 1)) * 100))
                 progress_response = {
                     "type": "fault_record_progress",
                     "device_id": self.device_status()["device_id"],
-                    "request_id": request_id_str,
-                    "current_batch": i + 2,
-                    "total_batches": total_wave_groups + 1,
+                    "request_id": request_id,
+                    "current_batch": i + 2,  # +2 因为故障信息头是第1批
+                    "total_batches": total_wave_groups + 1,  # 301
                     "percentage": actual_percentage,
                     "current_group": i + 1,
-                    "total_groups": total_wave_groups,
+                    "total_groups": total_wave_groups,  # 300
                     "timestamp": datetime.now().isoformat()
                 }
-                await self.connection_manager.send_to_connection(websocket, progress_response)
+                await self.connection_manager.send_to_connection(
+                    websocket, progress_response
+                )
                 
-                # 🔥 关键修复:更新心跳时间,防止长时间读取被误判为超时
+                # 🔥 关键修复：更新心跳时间，防止长时间读取被误判为超时
                 await self.connection_manager.update_heartbeat(websocket)
                 
-                # 添加短暂延迟,避免读取过快
+                # 检查是否被取消
+                logger.debug(f"🔍 检查取消标志 - request_id: {request_id}, 当前标志: {dict(self.fault_record_cancel_flags)}")
+                logger.debug(f"🔍 request_id参数值: {request_id}")
+                if self.fault_record_cancel_flags.get(request_id, False):
+                    logger.info(f"🛑 故障录波读取在第{i+1}组被取消，request_id: {request_id}")
+                    
+                    # 发送取消通知
+                    cancel_response = {
+                        "type": "fault_record_cancelled",
+                        "device_id": self.device_status()["device_id"],
+                        "request_id": request_id,
+                        "cancelled_at_batch": i + 2,  # +2 因为故障信息头是第1批
+                        "cancelled_at_group": i + 1,
+                        "total_groups": total_wave_groups,
+                        "timestamp": datetime.now().isoformat()
+                    }
+                    await self.connection_manager.send_to_connection(
+                        websocket, cancel_response
+                    )
+                    
+                    # 清理取消标志
+                    del self.fault_record_cancel_flags[request_id]
+                    
+                    # 直接结束整个读取流程
+                    logger.warning(f"🛑 录波数据读取在第{i+1}组被取消，已停止读取流程")
+                    return
+                
+                # 添加短暂延迟，避免读取过快
                 await asyncio.sleep(0.01)
             
-            logger.info(f"✅ 总共读取 {len(all_registers)} 个寄存器")
+            logger.info(f"总共读取 {len(all_registers)} 个寄存器")
             
-            # 发送最终进度更新(100%)
+            # 发送最终进度更新（100%）
             final_progress_response = {
                 "type": "fault_record_progress",
                 "device_id": self.device_status()["device_id"],
-                "request_id": request_id_str,
-                "current_batch": total_wave_groups + 1,
-                "total_batches": total_wave_groups + 1,
+                "request_id": request_id,
+                "current_batch": total_wave_groups + 1,  # 301
+                "total_batches": total_wave_groups + 1,  # 301
                 "percentage": 100,
                 "timestamp": datetime.now().isoformat()
             }
-            await self.connection_manager.send_to_connection(websocket, final_progress_response)
+            await self.connection_manager.send_to_connection(
+                websocket, final_progress_response
+            )
             
-            # 🔥 关键修复:更新心跳时间,防止长时间读取被误判为超时
+            # 🔥 关键修复：更新心跳时间，防止长时间读取被误判为超时
             await self.connection_manager.update_heartbeat(websocket)
             
-            # 添加短暂延迟,确保前端能处理进度消息
+            # 添加短暂延迟，确保前端能处理进度消息
             await asyncio.sleep(0.1)
             
             # 解析故障录波数据
@@ -634,162 +576,98 @@ class MessageHandler:
             complete_response = {
                 "type": "fault_record_complete",
                 "device_id": self.device_status()["device_id"],
-                "request_id": request_id_str,
+                "request_id": request_id,
                 "data": fault_data,
                 "timestamp": datetime.now().isoformat()
             }
             
             await self.connection_manager.send_to_connection(websocket, complete_response)
-            logger.info(f"✅ 故障录波读取完成 - request_id: '{request_id_str}'")
             
-            # 清理取消标志(如果存在)
-            if request_id_str in self.fault_record_cancel_flags:
-                del self.fault_record_cancel_flags[request_id_str]
-                logger.info(f"🧹 清理取消标志: '{request_id_str}'")
+            # 清理取消标志（如果存在）
+            if request_id in self.fault_record_cancel_flags:
+                del self.fault_record_cancel_flags[request_id]
                 
         except asyncio.CancelledError:
-            logger.info(f"🛑 故障录波读取任务 '{request_id_str}' 被取消(CancelledError)")
+            logger.info(f"🛑 故障录波读取任务 {request_id} 被取消")
             
             # 发送取消通知
             cancel_response = {
                 "type": "fault_record_cancelled",
                 "device_id": self.device_status()["device_id"],
-                "request_id": request_id_str,
-                "cancelled_at_batch": 0,
-                "cancel_reason": "任务被取消(asyncio.CancelledError)",
+                "request_id": request_id,
+                "cancelled_at_batch": 0,  # 任务级别取消
+                "cancel_reason": "任务被取消",
                 "timestamp": datetime.now().isoformat()
             }
             await self.connection_manager.send_to_connection(websocket, cancel_response)
             
             # 清理取消标志
-            if request_id_str in self.fault_record_cancel_flags:
-                del self.fault_record_cancel_flags[request_id_str]
-                logger.info(f"🧹 清理取消标志: '{request_id_str}'")
+            if request_id in self.fault_record_cancel_flags:
+                del self.fault_record_cancel_flags[request_id]
             
-            # 重新抛出异常,让调用者知道任务被取消
+            # 重新抛出异常，让调用者知道任务被取消
             raise
             
         except Exception as e:
-            logger.error(f"❌ 故障录波读取异常: {e}")
-            import traceback
-            traceback.print_exc()
-            
-            # 发送错误响应
+            logger.error(f"故障录波读取异常: {e}")
             await self._send_error_response(websocket, 500, f"故障录波读取失败: {str(e)}")
             
-            # 清理取消标志(如果存在)
-            if request_id_str in self.fault_record_cancel_flags:
-                del self.fault_record_cancel_flags[request_id_str]
-                logger.info(f"🧹 清理取消标志: '{request_id_str}'")
+            # 清理取消标志（如果存在）
+            if request_id in self.fault_record_cancel_flags:
+                del self.fault_record_cancel_flags[request_id]
     
     async def _handle_fault_record_cancel(self, websocket, data: Dict[str, Any], connection_info: Dict[str, Any]):
-        """处理故障录波取消消息 - 完全修复版本"""
+        """处理故障录波取消消息"""
+        request_id = data.get("data", {}).get("request_id")
         
-        # 🔥 关键修复1: 正确解析 request_id
-        # 前端发送的消息格式可能有两种:
-        # 格式1: {"type": "fault_record_cancel", "data": {"request_id": "..."}}
-        # 格式2: {"type": "fault_record_cancel", "request_id": "..."}
+        # 🔍 调试日志：记录取消请求中的request_id
+        logger.info(f"📨 收到取消请求 - 原始data: {data}")
+        logger.info(f"📨 data类型: {type(data)}")
+        logger.info(f"📨 data.keys(): {list(data.keys())}")
+        logger.info(f"📨 data.get('data'): {data.get('data')}")
+        logger.info(f"📨 data.get('data', {{}}).get('request_id'): {data.get('data', {}).get('request_id')}")
+        logger.info(f"📨 解析后的request_id: {request_id}")
         
-        request_id = None
+        logger.info(f"🔍 执行故障录波取消逻辑 - request_id: {request_id}")
+        logger.info(f"🔍 取消标志字典当前状态: {dict(self.fault_record_cancel_flags)}")
+        logger.info(f"🔍 当前运行任务: {list(self.fault_record_tasks.keys())}")
         
-        # 首先尝试从 data.data 中获取
-        if "data" in data and isinstance(data["data"], dict):
-            request_id = data["data"].get("request_id")
-        
-        # 如果没有获取到,尝试直接从 data 根层级获取
-        if not request_id:
-            request_id = data.get("request_id")
-        
-        # 🔥 关键修复2: 统一使用字符串类型
-        request_id_str = str(request_id) if request_id else None
-        
-        # 📝 详细日志
-        logger.info("=" * 80)
-        logger.info(f"🔨 收到故障录波取消请求")
-        logger.info(f"🔨 原始消息 data: {data}")
-        if "data" in data:
-            logger.info(f"🔨 data['data'] 的值: {data['data']}")
-            logger.info(f"🔨 data['data'] 的类型: {type(data['data']).__name__}")
-        logger.info(f"🔨 解析后的 request_id: '{request_id_str}'")
-        logger.info(f"🔨 当前取消标志字典: {dict(self.fault_record_cancel_flags)}")
-        logger.info(f"🔨 当前运行任务列表: {list(self.fault_record_tasks.keys())}")
-        logger.info("=" * 80)
-        
-        # 验证 request_id
-        if not request_id_str or request_id_str == "None":
-            logger.error("❌ 未找到有效的 request_id,无法取消")
-            error_response = {
-                "type": "fault_record_cancel_error",
-                "device_id": self.device_status()["device_id"],
-                "error": "缺少 request_id 参数或 request_id 无效",
-                "received_data": str(data),
-                "timestamp": datetime.now().isoformat()
-            }
-            await self.connection_manager.send_to_connection(websocket, error_response)
-            return
-        
-        # 🔥 关键修复3: 立即设置取消标志
-        self.fault_record_cancel_flags[request_id_str] = True
-        logger.info(f"✅ 已设置取消标志")
-        logger.info(f"✅ 标志键: '{request_id_str}'")
-        logger.info(f"✅ 标志值: True")
-        logger.info(f"✅ 更新后的取消标志字典: {dict(self.fault_record_cancel_flags)}")
-        
-        # 🔥 关键修复4: 尝试取消正在运行的任务
-        task_found = False
-        task_status = "not_found"
-        
-        if request_id_str in self.fault_record_tasks:
-            task = self.fault_record_tasks[request_id_str]
-            task_found = True
+        # 设置取消标志
+        if request_id:
+            self.fault_record_cancel_flags[request_id] = True
+            logger.info(f"✅ 设置故障录波读取取消标志: {request_id}")
+            logger.info(f"✅ 取消标志字典更新后状态: {dict(self.fault_record_cancel_flags)}")
             
-            if task.done():
-                task_status = "already_done"
-                logger.info(f"ℹ️ 任务 '{request_id_str}' 已经完成,无需取消")
+            # 🔥 关键修复：尝试取消正在运行的任务
+            if request_id in self.fault_record_tasks:
+                task = self.fault_record_tasks[request_id]
+                if not task.done():
+                    logger.info(f"🛑 正在取消request_id为 {request_id} 的故障录波读取任务")
+                    task.cancel()
+                    try:
+                        await task
+                        logger.info(f"✅ 成功取消任务: {request_id}")
+                    except asyncio.CancelledError:
+                        logger.info(f"✅ 任务 {request_id} 已被成功取消")
+                    except Exception as e:
+                        logger.error(f"❌ 取消任务 {request_id} 时出错: {e}")
+                else:
+                    logger.info(f"ℹ️ 任务 {request_id} 已经完成，无需取消")
             else:
-                task_status = "cancelled"
-                logger.info(f"🛑 找到运行中的任务,正在取消: '{request_id_str}'")
-                
-                # 取消任务
-                task.cancel()
-                
-                try:
-                    # 等待任务完成取消
-                    await asyncio.wait_for(task, timeout=1.0)
-                    logger.info(f"✅ 任务已成功取消: '{request_id_str}'")
-                except asyncio.CancelledError:
-                    logger.info(f"✅ 任务 '{request_id_str}' 已被取消(CancelledError)")
-                except asyncio.TimeoutError:
-                    logger.warning(f"⚠️ 任务 '{request_id_str}' 取消超时,但取消信号已发送")
-                except Exception as e:
-                    logger.error(f"❌ 取消任务 '{request_id_str}' 时出错: {e}")
+                logger.info(f"ℹ️ 未找到request_id为 {request_id} 的运行中任务，仅设置取消标志")
         else:
-            logger.info(f"ℹ️ 未找到request_id为 '{request_id_str}' 的运行中任务")
-            logger.info(f"ℹ️ 这可能是因为:")
-            logger.info(f"   1. 任务还未创建")
-            logger.info(f"   2. 任务已经完成并清理")
-            logger.info(f"   3. request_id 不匹配")
-            logger.info(f"ℹ️ 取消标志已设置,如果任务正在运行,将在下次检查时停止")
+            logger.warning("⚠️ 未提供request_id，无法设置取消标志")
         
-        # 发送取消确认
         response = {
-            "type": "fault_record_cancel_ack",
+            "type": "fault_record_cancelled",
             "device_id": self.device_status()["device_id"],
-            "request_id": request_id_str,
-            "cancel_flag_set": True,
-            "task_found": task_found,
-            "task_status": task_status,
-            "message": "取消请求已处理,正在停止读取操作",
+            "request_id": request_id,
+            "cancelled_at_batch": 10,  # 模拟在第10批时取消
             "timestamp": datetime.now().isoformat()
         }
         
         await self.connection_manager.send_to_connection(websocket, response)
-        
-        logger.info("=" * 80)
-        logger.info(f"✅ 取消请求处理完成")
-        logger.info(f"✅ 已发送取消确认: {response}")
-        logger.info(f"✅ 最终取消标志字典: {dict(self.fault_record_cancel_flags)}")
-        logger.info("=" * 80)
+        logger.info(f"✅ 发送取消响应: {response}")
     
     async def _handle_param_read(self, websocket, data: Dict[str, Any], connection_info: Dict[str, Any]):
         """处理参数读取"""

@@ -411,51 +411,92 @@ class SerialManager:
         """获取当前数据（兼容旧版本）"""
         return self.hmi_current_data
 
-    def read_fault_record(self, device_type: str, record_id: int, start_offset: int = 0, length: int = 125) -> Optional[List[int]]:
+    def read_fault_record(self, device_type: str, record_id: int, start_offset: int, length: int) -> Optional[List[int]]:
         """
-        读取故障录波记录
+        读取故障录波数据
         
         Args:
-            device_type: 设备类型 ('hmi' 或 'scada')
-            record_id: 记录编号 (0=最新记录，1=上一条记录，以此类推)
-            start_offset: 记录起始偏移地址（寄存器偏移）
+            device_type: 设备类型 ('hmi' 或 'pscada')
+            record_id: 记录ID (0=最新记录，1=上一条记录，以此类推)
+            start_offset: 起始偏移量（寄存器偏移）
             length: 要读取的寄存器数量
             
         Returns:
-            读取到的寄存器数据列表，失败返回None
+            读取到的寄存器数据列表，如果读取失败返回None
         """
-        try:
-            if device_type.lower() == 'hmi':
-                master = self.hmi_master
-                config = self.hmi_config
-            elif device_type.lower() == 'scada':
-                master = self.scada_master
-                config = self.scada_config
-            else:
-                logger.error(f"未知的设备类型: {device_type}")
-                return None
+        if not self.is_running:
+            logger.error("串口管理器未运行")
+            return None
 
+        master = None
+        slave_address = 0
+        
+        try:
+            # 根据设备类型选择主站和从站地址
+            if device_type == 'hmi':
+                master = self.hmi_master
+                slave_address = self.hmi_config.slave_address
+            elif device_type == 'pscada':
+                master = self.scada_master
+                slave_address = self.scada_config.slave_address
+            else:
+                logger.error(f"未知设备类型: {device_type}")
+                return None
+            
             if not master or not master.is_open():
                 logger.error(f"{device_type.upper()}串口未连接")
                 return None
-
-            if not config:
-                logger.error(f"{device_type.upper()}配置未加载")
+            
+            # 检查读取长度限制，避免单次读取过长
+            max_read_length = 125  # Modbus协议建议的最大读取长度
+            if length > max_read_length:
+                logger.warning(f"读取长度{length}超过建议最大值{max_read_length}，可能读取失败")
+            
+            # 记录详细的读取请求信息
+            logger.info(f"故障录波读取请求: 设备={device_type}, 从站={slave_address}, 记录ID={record_id}, 偏移={start_offset}, 长度={length}")
+            
+            # 使用文件读取功能码(0x14)读取故障录波记录
+            registers = master.read_file_record(slave_address, record_id, start_offset, length)
+            
+            if registers and len(registers) > 0:
+                logger.info(f"成功读取故障录波记录: 记录ID={record_id}, 偏移={start_offset}, 长度={length}, 实际读取={len(registers)}")
+                
+                # 验证数据完整性
+                if len(registers) != length:
+                    logger.warning(f"读取数据长度不匹配: 期望{length}, 实际{len(registers)}")
+                
+                # 检查数据合理性（避免全0或全1的异常数据）
+                if all(reg == 0 for reg in registers):
+                    logger.warning(f"读取到全0数据，可能设备异常: 记录ID={record_id}, 偏移={start_offset}")
+                elif all(reg == 0xFFFF for reg in registers):
+                    logger.warning(f"读取到全1数据，可能设备异常: 记录ID={record_id}, 偏移={start_offset}")
+                
+                return registers
+            else:
+                logger.error(f"故障录波记录读取失败: 记录ID={record_id}, 偏移={start_offset}, 长度={length}")
                 return None
-
-            # 使用功能码0x14读取文件记录
-            registers = master.read_file_record(
-                slave=config.slave_address,
-                file_number=record_id,
-                record_start=start_offset,
-                record_length=length
-            )
-
-            logger.info(f"成功读取{device_type.upper()}故障录波记录: 记录ID={record_id}, 长度={len(registers)}")
-            return registers
-
+                
         except Exception as e:
-            logger.error(f"读取{device_type.upper()}故障录波记录失败: {e}")
+            logger.error(f"读取故障录波记录异常: {e}")
+            logger.error(f"异常详情: 设备={device_type}, 从站={slave_address}, 记录ID={record_id}, 偏移={start_offset}, 长度={length}")
+            
+            # 添加更详细的错误分类
+            error_str = str(e)
+            if "从站地址不匹配" in error_str:
+                logger.error("错误类型：从站地址不匹配 - 可能原因：1)设备地址配置错误 2)通信干扰 3)设备响应异常")
+            elif "CRC校验失败" in error_str:
+                logger.error("错误类型：CRC校验失败 - 可能原因：1)通信干扰 2)线路质量差 3)设备硬件故障")
+            elif "响应数据太短" in error_str:
+                logger.error("错误类型：响应数据不完整 - 可能原因：1)设备处理超时 2)通信中断 3)设备缓冲区溢出")
+            elif "功能码不匹配" in error_str:
+                logger.error("错误类型：功能码不匹配 - 可能原因：1)设备不支持文件读取 2)设备固件版本不兼容")
+            elif "Modbus错误响应" in error_str:
+                logger.error("错误类型：Modbus协议错误 - 需要查看具体的错误码")
+            else:
+                logger.error("错误类型：其他异常 - 需要进一步分析")
+            
+            import traceback
+            traceback.print_exc()
             return None
 
     def _convert_to_websocket_format(self, data_type: str, device_data: DeviceData) -> dict:

@@ -75,7 +75,11 @@ class MessageHandler:
                 await self._handle_heartbeat(websocket, data, connection_info)
             elif msg_type == "control_cmd":
                 logger.info("处理控制指令消息")
-                await self._handle_control_command(websocket, data, connection_info)
+                # 提取实际的控制指令数据
+                control_data = data.get("data", {})
+                logger.info(f"提取的控制指令数据: {control_data}")
+
+                await self._handle_control_command(websocket, control_data, connection_info)
             elif msg_type == "fault_record_list":
                 logger.info("处理故障录波目录查询消息")
                 await self._handle_fault_record_list(websocket, data, connection_info)
@@ -260,14 +264,56 @@ class MessageHandler:
             connection_info: Dict[str, Any]
     ) -> Dict[str, Any]:
         """处理故障录波清除指令"""
+        # 🔥 关键修复：先从设备寄存器获取当前实际记录数
+        cleared_count = 0
+        try:
+            if self.serial_manager and self.serial_manager.hmi_master:
+                # 从设备寄存器0x0300读取当前故障录波记录数
+                registers = self.serial_manager.hmi_master.read_holding_registers(16, 0x0300, 1)
+                if registers and len(registers) >= 1:
+                    cleared_count = registers[0]  # 0x0300: 当前故障录波记录数
+                    logger.info(f"📋 设备当前故障录波记录数: {cleared_count}")
+                else:
+                    logger.warning("⚠️ 无法从设备读取记录数，默认使用内存列表长度")
+                    cleared_count = len(self.fault_records)
+            else:
+                logger.warning("⚠️ 串口管理器未初始化，使用内存列表长度")
+                cleared_count = len(self.fault_records)
+        except Exception as e:
+            logger.error(f"❌ 读取设备记录数失败: {e}，使用内存列表长度")
+            cleared_count = len(self.fault_records)
+        
+        # 🔥 关键修复：通过功能码0x05写线圈清除故障录波记录
+        device_clear_success = False
+        try:
+            if self.serial_manager and self.serial_manager.hmi_master:
+                # 根据文档，使用功能码0x05向地址0x0110发送非零数据来清除故障录波记录
+                write_success = self.serial_manager.hmi_master.write_single_coil(16, 0x0110, True)
+                if write_success:
+                    logger.info(f"✅ 成功通过功能码0x05向地址0x0110发送清除命令")
+                    device_clear_success = True
+                else:
+                    logger.error("❌ 写线圈命令失败")
+            else:
+                logger.error("❌ 串口管理器未初始化，无法发送清除命令")
+        except Exception as e:
+            logger.error(f"❌ 发送清除命令失败: {e}")
+        
+        # 只有在设备清除成功后才清空内存列表
+        if device_clear_success:
+            self.fault_records.clear()  # 清空故障记录列表
+            logger.info(f"✅ 设备清除成功，已清空内存中的故障记录")
+        else:
+            logger.warning(f"⚠️ 设备清除失败，保留内存中的故障记录")
+
         return {
             "type": "control_ack",
             "device_id": self.device_status()["device_id"],
             "request_id": data.get("request_id"),
             "cmd": "fault_record_clear",
-            "exec_status": "success",
-            "exec_msg": "故障录波记录已清除",
-            "cleared_count": len(self.fault_records),
+            "exec_status": "success" if device_clear_success else "failed",
+            "exec_msg": "故障录波记录已清除" if device_clear_success else "设备清除失败",
+            "cleared_count": cleared_count if device_clear_success else 0,
             "timestamp": datetime.now().isoformat()
         }
     
@@ -411,6 +457,37 @@ class MessageHandler:
         
         # 📝 调试日志:记录初始request_id
         logger.info(f"🚀 _execute_fault_record_read 开始执行 - request_id: '{request_id_str}', record_id: {record_id}")
+        
+        # 🔥 关键检查: 在读取前先检查设备中是否有故障录波记录
+        try:
+            # 从设备寄存器0x0300读取实际的故障录波记录数
+            total_records_result = self.serial_manager.read_holding_registers(
+                device_type='hmi', 
+                address=0x0300, 
+                count=1
+            )
+            
+            if total_records_result and len(total_records_result) > 0:
+                total_records = total_records_result[0]
+                logger.info(f"📊 设备中故障录波记录数: {total_records}")
+                
+                if total_records == 0:
+                    logger.warning(f"⚠️ 设备中没有故障录波记录，无法读取详情 - request_id: '{request_id_str}'")
+                    error_response = {
+                        "type": "fault_record_read_error",
+                        "device_id": self.device_status()["device_id"],
+                        "request_id": request_id_str,
+                        "error": "设备中没有故障录波记录，无法读取详情",
+                        "total_records": 0,
+                        "timestamp": datetime.now().isoformat()
+                    }
+                    await self.connection_manager.send_to_connection(websocket, error_response)
+                    return
+            else:
+                logger.warning(f"⚠️ 无法从设备读取故障录波记录数，继续执行读取操作")
+                
+        except Exception as e:
+            logger.error(f"❌ 检查设备记录数时发生异常: {e}，继续执行读取操作")
         
         # 获取配置信息
         fault_config = self.config_manager.get_section('HMI故障录波读取配置')

@@ -590,6 +590,46 @@ class DatabaseAPI:
         finally:
             session.close()
     
+    async def check_user_exists(self, username: str) -> bool:
+        """
+        检查用户是否存在
+        
+        Args:
+            username: 用户名
+            
+        Returns:
+            bool: 用户是否存在
+        """
+        try:
+            # 使用同步方式执行查询
+            loop = asyncio.get_event_loop()
+            exists = await loop.run_in_executor(
+                self.database_manager.thread_pool,
+                self._sync_check_user_exists,
+                username
+            )
+            
+            return exists
+                
+        except Exception as e:
+            logger.error(f"检查用户是否存在失败: {e}")
+            return False
+    
+    def _sync_check_user_exists(self, username: str) -> bool:
+        """同步检查用户是否存在"""
+        session = self.database_manager.get_session()
+        try:
+            # 查询用户是否存在 - 使用原始SQL查询避免模型字段不匹配问题
+            from sqlalchemy import text
+            query = text("SELECT id FROM user_permissions WHERE username = :username")
+            result = session.execute(query, {"username": username})
+            user_row = result.fetchone()
+            
+            return user_row is not None
+                
+        finally:
+            session.close()
+    
     async def authenticate_user(self, username: str, password: str) -> Optional[Dict[str, Any]]:
         """
         用户认证
@@ -693,6 +733,33 @@ class DatabaseAPI:
             logger.error(f"获取用户信息失败: {e}")
             return None
     
+    async def change_password(self, user_id: str, current_password: str, new_password: str) -> bool:
+        """
+        修改用户密码
+        
+        Args:
+            user_id: 用户ID
+            current_password: 当前密码
+            new_password: 新密码
+            
+        Returns:
+            bool: 修改是否成功
+        """
+        try:
+            # 使用同步方式执行修改
+            loop = asyncio.get_event_loop()
+            result = await loop.run_in_executor(
+                self.database_manager.thread_pool,
+                self._sync_change_password,
+                user_id, current_password, new_password
+            )
+            
+            return result
+                
+        except Exception as e:
+            logger.error(f"修改密码失败: {e}")
+            return False
+    
     def _sync_get_user_by_id(self, user_id: str) -> Optional[Dict[str, Any]]:
         """同步根据用户ID获取用户信息"""
         session = self.database_manager.get_session()
@@ -713,6 +780,62 @@ class DatabaseAPI:
                 'allowed_commands': user.allowed_commands
             }
                 
+        finally:
+            session.close()
+    
+    def _sync_change_password(self, user_id: str, current_password: str, new_password: str) -> bool:
+        """同步修改用户密码"""
+        session = self.database_manager.get_session()
+        try:
+            # 查询用户信息 - 使用原始SQL查询避免模型字段不匹配问题
+            from sqlalchemy import text
+            query = text("SELECT id, username, password_hash, role, permissions, is_active FROM user_permissions WHERE id = :user_id")
+            result = session.execute(query, {"user_id": user_id})
+            user_row = result.fetchone()
+            
+            if user_row is None:
+                logger.warning(f"用户不存在: {user_id}")
+                return False
+            
+            # 提取用户信息
+            db_id, username, password_hash, role, permissions, is_active = user_row
+            
+            # 检查用户是否激活
+            if not is_active:
+                logger.warning(f"用户已被禁用: {username}")
+                return False
+            
+            # 验证当前密码 - 支持bcrypt哈希密码和明文密码
+            # 检查是否是bcrypt哈希（以$2b$开头）
+            if password_hash.startswith('$2b$'):
+                # 使用bcrypt验证密码
+                if not bcrypt.checkpw(current_password.encode('utf-8'), password_hash.encode('utf-8')):
+                    logger.warning(f"当前密码验证失败: {username}")
+                    return False
+            else:
+                # 使用明文密码验证（向后兼容）
+                if password_hash != current_password:
+                    logger.warning(f"当前密码验证失败: {username}")
+                    return False
+            
+            # 生成新的密码哈希
+            new_password_hash = bcrypt.hashpw(new_password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+            
+            # 更新密码
+            update_query = text("UPDATE user_permissions SET password_hash = :password_hash WHERE id = :user_id")
+            session.execute(update_query, {
+                "password_hash": new_password_hash,
+                "user_id": user_id
+            })
+            session.commit()
+            
+            logger.info(f"用户密码修改成功: {username}")
+            return True
+                
+        except Exception as e:
+            logger.error(f"修改密码操作失败: {e}")
+            session.rollback()
+            return False
         finally:
             session.close()
     

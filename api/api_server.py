@@ -28,6 +28,12 @@ class LoginRequest(BaseModel):
     password: str
 
 
+class ChangePasswordRequest(BaseModel):
+    """修改密码请求模型"""
+    current_password: str
+    new_password: str
+
+
 class TokenResponse(BaseModel):
     """Token响应模型"""
     token: str
@@ -154,6 +160,11 @@ class APIServer:
             """退出登录"""
             return await self._handle_logout()
         
+        @self.app.post("/api/v1/auth/change_password", response_model=Dict[str, Any])
+        async def change_password(request: Request, password_request: ChangePasswordRequest):
+            """修改密码"""
+            return await self._handle_change_password(request, password_request)
+        
         # 设备信息接口
         @self.app.get("/api/v1/device/info", response_model=Dict[str, Any])
         async def get_device_info():
@@ -229,11 +240,18 @@ class APIServer:
             if not self.database_api:
                 raise HTTPException(status_code=500, detail="数据库API未初始化")
             
+            # 先检查用户是否存在
+            user_exists = await self.database_api.check_user_exists(request.username)
+            
+            if not user_exists:
+                raise HTTPException(status_code=401, detail="用户不存在")
+            
             # 使用数据库API进行用户认证
             user_info = await self.database_api.authenticate_user(request.username, request.password)
             
             if user_info is None:
-                raise HTTPException(status_code=401, detail="用户名或密码错误")
+                # 用户存在但认证失败，说明密码错误
+                raise HTTPException(status_code=401, detail="密码错误")
             
             # 使用认证管理器创建Token
             token = self.auth_manager.create_access_token(user_info)
@@ -315,6 +333,62 @@ class APIServer:
             "msg": "已退出登录",
             "timestamp": datetime.now().isoformat()
         }
+    
+    async def _handle_change_password(self, request: Request, password_request: ChangePasswordRequest) -> Dict[str, Any]:
+        """处理修改密码请求"""
+        try:
+            # 从请求头中获取Authorization信息
+            authorization = request.headers.get("Authorization")
+            
+            if not authorization:
+                raise HTTPException(status_code=401, detail="缺少Authorization头")
+            
+            # 提取Bearer Token
+            if not authorization.startswith("Bearer "):
+                raise HTTPException(status_code=401, detail="Authorization格式错误，应为Bearer Token")
+            
+            token = authorization[7:]  # 移除"Bearer "前缀
+            
+            if not token:
+                raise HTTPException(status_code=401, detail="Token不能为空")
+            
+            # 验证Token并获取用户信息
+            if not self.auth_manager:
+                raise HTTPException(status_code=500, detail="认证管理器未初始化")
+            
+            payload = self.auth_manager.verify_token(token)
+            user_id = payload.get("sub")
+            
+            if not user_id:
+                raise HTTPException(status_code=401, detail="Token中缺少用户ID")
+            
+            # 检查数据库API是否可用
+            if not self.database_api:
+                raise HTTPException(status_code=500, detail="数据库API未初始化")
+            
+            # 使用数据库API修改密码
+            success = await self.database_api.change_password(
+                user_id, 
+                password_request.current_password, 
+                password_request.new_password
+            )
+            
+            if not success:
+                raise HTTPException(status_code=400, detail="修改密码失败，请检查当前密码是否正确")
+            
+            return {
+                "code": 200,
+                "msg": "密码修改成功",
+                "timestamp": datetime.now().isoformat()
+            }
+            
+        except HTTPException:
+            # 重新抛出HTTP异常
+            raise
+        except Exception as e:
+            # 记录详细的错误信息
+            logger.error(f"修改密码时发生错误: {str(e)}")
+            raise HTTPException(status_code=500, detail="修改密码失败，请稍后重试")
     
     async def _handle_health_check(self) -> Dict[str, Any]:
         """处理健康检查"""

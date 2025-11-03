@@ -94,6 +94,26 @@ logging.getLogger('websockets.protocol').setLevel(logging.WARNING)
 # 控制WebSocket数据推送器日志级别（减少数据缓存调试信息）
 logging.getLogger('websocket.data_pusher').setLevel(logging.INFO)
 
+# 屏蔽心跳相关的日志输出
+logging.getLogger('websocket.connection_manager').setLevel(logging.ERROR)
+logging.getLogger('websocket.message_handler').setLevel(logging.WARNING)
+
+# 添加日志过滤器，屏蔽包含特定关键词的日志
+class HeartbeatLogFilter(logging.Filter):
+    """屏蔽心跳相关日志的过滤器"""
+    def filter(self, record):
+        # 屏蔽包含这些关键词的日志消息
+        heartbeat_keywords = ['心跳', 'heartbeat', '连接已注册', '连接已注销', '发送消息']
+        message = record.getMessage()
+        return not any(keyword in message.lower() for keyword in heartbeat_keywords)
+
+# 为连接管理器和消息处理器添加过滤器
+connection_manager_logger = logging.getLogger('websocket.connection_manager')
+message_handler_logger = logging.getLogger('websocket.message_handler')
+
+connection_manager_logger.addFilter(HeartbeatLogFilter())
+message_handler_logger.addFilter(HeartbeatLogFilter())
+
 print(f"日志配置完成 - 级别: {log_level_str}, 文件: {log_file_full_path}")
 if log_level > logging.INFO:
     print(f"已预先禁用pymodbus和HTTP客户端调试日志输出")

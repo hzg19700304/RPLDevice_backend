@@ -249,7 +249,8 @@ class ConfigManager:
             'show_api_status': 'API状态',
             'show_fault_record': '故障录波',
             'show_range_settings': '量程设置',
-            'show_channel_calibration': '通道校正'
+            'show_channel_calibration': '通道校正',
+            'show_user_management': '用户管理'
         }
 
         enabled_pages = {}
